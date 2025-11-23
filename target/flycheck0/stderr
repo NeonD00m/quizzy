@@ -1,5 +1,5 @@
-   0.040972100s  INFO prepare_target{force=false package_id=quizzy v0.1.0 (C:\Users\neonf\Documents\Github\quizzy) target="quizzy"}: cargo::core::compiler::fingerprint: fingerprint error for quizzy v0.1.0 (C:\Users\neonf\Documents\Github\quizzy)/Check { test: false }/TargetInner { name: "quizzy", doc: true, ..: with_path("C:\\Users\\neonf\\Documents\\Github\\quizzy\\src\\main.rs", Edition2024) }
-   0.041024100s  INFO prepare_target{force=false package_id=quizzy v0.1.0 (C:\Users\neonf\Documents\Github\quizzy) target="quizzy"}: cargo::core::compiler::fingerprint:     err: failed to read `C:\Users\neonf\Documents\Github\quizzy\target\debug\.fingerprint\quizzy-fb2aa0da0f6403eb\bin-quizzy`
+   0.083317900s  INFO prepare_target{force=false package_id=quizzy v0.1.0 (C:\Users\neonf\Documents\Github\quizzy) target="quizzy"}: cargo::core::compiler::fingerprint: fingerprint error for quizzy v0.1.0 (C:\Users\neonf\Documents\Github\quizzy)/Check { test: false }/TargetInner { name: "quizzy", doc: true, ..: with_path("C:\\Users\\neonf\\Documents\\Github\\quizzy\\src\\main.rs", Edition2024) }
+   0.083421800s  INFO prepare_target{force=false package_id=quizzy v0.1.0 (C:\Users\neonf\Documents\Github\quizzy) target="quizzy"}: cargo::core::compiler::fingerprint:     err: failed to read `C:\Users\neonf\Documents\Github\quizzy\target\debug\.fingerprint\quizzy-fb2aa0da0f6403eb\bin-quizzy`
 
 Caused by:
     The system cannot find the file specified. (os error 2)
@@ -26,8 +26,8 @@ Stack backtrace:
   18: git_midx_writer_dump
   19: BaseThreadInitThunk
   20: RtlUserThreadStart
-   0.052395300s  INFO prepare_target{force=false package_id=quizzy v0.1.0 (C:\Users\neonf\Documents\Github\quizzy) target="quizzy"}: cargo::core::compiler::fingerprint: fingerprint error for quizzy v0.1.0 (C:\Users\neonf\Documents\Github\quizzy)/Check { test: true }/TargetInner { name: "quizzy", doc: true, ..: with_path("C:\\Users\\neonf\\Documents\\Github\\quizzy\\src\\main.rs", Edition2024) }
-   0.052416400s  INFO prepare_target{force=false package_id=quizzy v0.1.0 (C:\Users\neonf\Documents\Github\quizzy) target="quizzy"}: cargo::core::compiler::fingerprint:     err: failed to read `C:\Users\neonf\Documents\Github\quizzy\target\debug\.fingerprint\quizzy-621967485310a750\test-bin-quizzy`
+   0.127133100s  INFO prepare_target{force=false package_id=quizzy v0.1.0 (C:\Users\neonf\Documents\Github\quizzy) target="quizzy"}: cargo::core::compiler::fingerprint: fingerprint error for quizzy v0.1.0 (C:\Users\neonf\Documents\Github\quizzy)/Check { test: true }/TargetInner { name: "quizzy", doc: true, ..: with_path("C:\\Users\\neonf\\Documents\\Github\\quizzy\\src\\main.rs", Edition2024) }
+   0.127169800s  INFO prepare_target{force=false package_id=quizzy v0.1.0 (C:\Users\neonf\Documents\Github\quizzy) target="quizzy"}: cargo::core::compiler::fingerprint:     err: failed to read `C:\Users\neonf\Documents\Github\quizzy\target\debug\.fingerprint\quizzy-621967485310a750\test-bin-quizzy`
 
 Caused by:
     The system cannot find the file specified. (os error 2)
@@ -55,6 +55,6 @@ Stack backtrace:
   19: BaseThreadInitThunk
   20: RtlUserThreadStart
     Checking quizzy v0.1.0 (C:\Users\neonf\Documents\Github\quizzy)
-error: could not compile `quizzy` (bin "quizzy" test) due to 3 previous errors; 1 warning emitted
-warning: build failed, waiting for other jobs to finish...
 error: could not compile `quizzy` (bin "quizzy") due to 3 previous errors; 1 warning emitted
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `quizzy` (bin "quizzy" test) due to 3 previous errors; 1 warning emitted
