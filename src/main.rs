@@ -3,12 +3,14 @@ use std::path::PathBuf;
 mod core;
 mod ui;
 
-use crate::ui::learn::*;
+use crate::core::deck::{example_deck, resolve_deck_source};
+use crate::ui::cards::cards;
+use crate::ui::learn::learn;
 
 #[derive(Parser)]
 #[command(name = "quizzy")]
 pub struct Cli {
-    #[command(Subcommand)]
+    #[command(subcommand)]
     command: Command,
 }
 
@@ -32,17 +34,41 @@ pub enum Command {
     },
     Learn {
         deck: String,
+
+        /// Don't save performance stats
+        #[arg(short, long)]
+        nostats: bool,
+
+        /// Ask about terms only (priority)
+        #[arg(short, long)]
+        terms: bool,
+
+        /// Ask about definitions only
+        #[arg(short, long)]
+        definitions: bool,
+
+        /// Ask written questions only (priority)
+        #[arg(short, long, default_value_t = false)]
+        written: bool,
+
+        /// Ask multiple choice questions only
+        #[arg(short, long, default_value_t = false)]
+        multiplechoice: bool,
+
+        /// Set the amount of questions
+        #[arg(short, long, default_value_t = 20)]
+        questions: u8,
     },
     Cards {
         deck: String,
+
+        /// Shuffle cards before studying
+        #[arg(short, long)]
+        shuffle: bool,
     },
     Delete {
         deck: String,
     },
-}
-
-fn get_deck(deck: String) -> Deck {
-
 }
 
 fn main() {
@@ -60,13 +86,41 @@ fn main() {
         Command::List { deck } => match deck {
             Some(name) => {
                 println!("Listing out cards in deck: {}", name);
+                let deck = example_deck();
+                for c in deck.cards {
+                    println!("{} -> {}", c.term, c.definition)
+                }
             }
             None => {
-                println!("Listing out saved decks")
+                println!("Listing out saved decks:");
             }
         },
-        Command::Learn { deck } => learn(get_deck(deck))
-        Command::Cards { deck } => {}
-        Command::Delete { deck } => {}
+        Command::Learn {
+            deck,
+            nostats,
+            terms,
+            definitions,
+            written,
+            multiplechoice,
+            questions,
+        } => learn(
+            resolve_deck_source(deck.as_str()),
+            nostats,
+            terms,
+            definitions,
+            written,
+            multiplechoice,
+            questions,
+        ),
+        Command::Cards { deck, shuffle } => cards(resolve_deck_source(deck.as_str()), shuffle),
+        Command::Delete { deck } => {
+            println!(
+                "Are you sure you want to delete from database?\n(This means removing the saved deck by this name)"
+            );
+            println!(
+                "Would you also like to delete all stats associated with this deck?\n(They can be preserved and then accessed by `quizzy stats {}`",
+                deck
+            )
+        }
     }
 }
