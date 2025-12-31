@@ -1,4 +1,5 @@
 use crate::core::deck::*;
+use crate::core::string_distance::string_distance;
 use core::f64;
 use rand::rngs::ThreadRng;
 use rand::seq::SliceRandom;
@@ -72,7 +73,7 @@ pub fn learn(
     let mut still_learning: HashSet<String> = HashSet::new();
     let mut input = String::new();
 
-    let deck = example_deck();
+    let deck = get_deck(src);
     let mut rng = thread_rng();
     let mut bucket: Vec<Card> = Vec::new();
     let mut random_cards = deck.cards.to_vec();
@@ -116,31 +117,17 @@ pub fn learn(
                     break;
                 }
                 // TODO: check if typed answer is close enough
-                let is_right = response
-                    == (if ask_term {
-                        c.definition.as_str()
-                    } else {
-                        c.term.as_str()
-                    });
-                if is_right {
-                    println!(
-                        "✓: {}\n",
-                        if ask_term {
-                            c.definition.as_str()
-                        } else {
-                            c.term.as_str()
-                        }
-                    );
+                let expected = if ask_term {
+                    c.definition.clone()
                 } else {
-                    println!(
-                        "X: {}\t\t\t✓: {}\n",
-                        response,
-                        if ask_term {
-                            c.definition.as_str()
-                        } else {
-                            c.term.as_str()
-                        }
-                    );
+                    c.term.clone()
+                };
+                let is_right = (expected.len() as f64 * 0.2)
+                    > (string_distance(response.to_string(), expected.clone()) as f64);
+                if is_right {
+                    println!("✓: {}\n", expected);
+                } else {
+                    println!("X: {}\t\t\t✓: {}\n", response, expected);
                 }
                 answered += 1;
                 answer(

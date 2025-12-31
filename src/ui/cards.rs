@@ -16,7 +16,7 @@ fn display_card(c: &Card, flipped: bool) {
 
 pub fn cards(src: DeckSource, shuffle: bool) {
     println!("To see options like -s for shuffling, use `quizzy help cards`");
-    let deck = example_deck();
+    let deck = get_deck(src);
     let mut flipped = false;
     let mut index: usize = 0;
     let mut cards = deck.cards;

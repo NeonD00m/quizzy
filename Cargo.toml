@@ -7,3 +7,6 @@ edition = "2024"
 clap = { version = "4.5.51", features = ["derive"] }
 rand = "0.8"
 rusqlite = "0.38.0"
+serde = { version = "1", features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
+crossterm = "0.29.0"

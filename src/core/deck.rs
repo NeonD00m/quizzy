@@ -1,3 +1,6 @@
+use crate::core::deck::DeckSource::*;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::vec::Vec;
 
@@ -20,6 +23,22 @@ pub struct Deck {
     pub name: String,
     // personal statistics? probably in storage separately
     pub cards: Vec<Card>,
+}
+
+impl Deck {
+    pub fn named(name: String) -> Self {
+        Self {
+            name,
+            cards: Vec::new(),
+        }
+    }
+
+    pub fn from_cards(cards: Vec<Card>) -> Self {
+        Self {
+            name: String::new(),
+            cards,
+        }
+    }
 }
 
 pub fn example_deck() -> Deck {
@@ -60,5 +79,31 @@ pub fn resolve_deck_source(arg: &str) -> DeckSource {
         DeckSource::File(path.to_path_buf())
     } else {
         DeckSource::Named(arg.to_string())
+    }
+}
+
+pub fn import_deck(path: PathBuf) -> Deck {
+    let file = File::open(path.as_path()).expect("Failed to open file.");
+    Deck::from_cards(
+        BufReader::new(file)
+            .lines()
+            .filter_map(|line| {
+                if let Ok(line) = line {
+                    let mut parts = line.split("\t");
+                    let term = parts.next()?;
+                    let definition = parts.next()?;
+                    Some(Card::new(term, definition))
+                } else {
+                    None
+                }
+            })
+            .collect(),
+    )
+}
+
+pub fn get_deck(src: DeckSource) -> Deck {
+    match src {
+        Named(n) => example_deck(),
+        File(p) => import_deck(p),
     }
 }

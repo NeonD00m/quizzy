@@ -4,6 +4,7 @@ mod core;
 mod ui;
 
 use crate::core::deck::{example_deck, resolve_deck_source};
+use crate::core::string_distance::string_distance;
 use crate::ui::cards::cards;
 use crate::ui::learn::learn;
 
@@ -16,6 +17,10 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Command {
+    Test {
+        s1: String,
+        s2: String,
+    },
     New {
         deck: String,
         file: Option<PathBuf>,
@@ -74,15 +79,22 @@ pub enum Command {
 fn main() {
     let cli = Cli::parse();
     match cli.command {
+        Command::Test { s1, s2 } => {
+            println!("String Distance: {}", string_distance(s1, s2));
+        }
         Command::New { deck, file } => {
-            println!("creating deck by name: {}", deck);
+            println!("creating deck by name: {deck}");
         }
         Command::Add {
             deck,
             term,
             definition,
-        } => {}
-        Command::Remove { deck, term } => {}
+        } => {
+            println!("Adding term ({term}) and definition ({definition}) to deck {deck}");
+        }
+        Command::Remove { deck, term } => {
+            println!("Removing term ({term}) from deck {deck}");
+        }
         Command::List { deck } => match deck {
             Some(name) => {
                 println!("Listing out cards in deck: {}", name);
@@ -118,8 +130,7 @@ fn main() {
                 "Are you sure you want to delete from database?\n(This means removing the saved deck by this name)"
             );
             println!(
-                "Would you also like to delete all stats associated with this deck?\n(They can be preserved and then accessed by `quizzy stats {}`",
-                deck
+                "Would you also like to delete all stats associated with this deck?\n(They can be preserved and then accessed by `quizzy stats {deck}`"
             )
         }
     }
