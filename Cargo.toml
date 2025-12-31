@@ -6,7 +6,13 @@ edition = "2024"
 [dependencies]
 clap = { version = "4.5.51", features = ["derive"] }
 rand = "0.8"
-rusqlite = "0.38.0"
+rusqlite = "0.38.0" # for storage of stats and sets
 serde = { version = "1", features = ["derive"] }
-chrono = { version = "0.4", features = ["serde"] }
-crossterm = "0.29.0"
+# chrono = { version = "0.4", features = ["serde"] } # would be cool to use for spaced repetition
+# crossterm = "0.29.0" # would be cool to use instead of current input system
+serde_json = "1.0.148"
+reqwest = { version = "0.12", features = ["json"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+url = "2.5.7"
+anyhow = "1.0.100"
+thiserror = "2.0.17"

@@ -17,6 +17,13 @@ impl Card {
             definition: d.to_string(),
         }
     }
+
+    pub fn from(t: String, d: String) -> Self {
+        Self {
+            term: t,
+            definition: d,
+        }
+    }
 }
 
 pub struct Deck {
