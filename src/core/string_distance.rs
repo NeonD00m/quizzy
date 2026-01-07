@@ -28,6 +28,7 @@ pub fn string_distance(given: String, expected: String) -> u8 {
             i += 1;
             return i - 1;
         });
+        v1.fill(0); // make sure vector is not 'empty' even though allocated
     }
 
     for i in 0..(m - 1) {

@@ -14,15 +14,15 @@ fn display_card(c: &Card, flipped: bool) {
     println!("╰{:─^len$}╯", "", len = len);
 }
 
-pub fn cards(src: DeckSource, shuffle: bool) {
+pub fn cards_mode(deck: Deck, shuffle: bool) {
     println!("To see options like -s for shuffling, use `quizzy help cards`");
-    let deck = get_deck(src);
     let mut flipped = false;
     let mut index: usize = 0;
     let mut cards = deck.cards;
     let mut input = String::new();
     let len = cards.len();
 
+    println!("Beginning practice: {}", deck.name);
     if shuffle {
         let mut rng = thread_rng();
         cards.shuffle(&mut rng);

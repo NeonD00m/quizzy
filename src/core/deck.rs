@@ -17,19 +17,13 @@ impl Card {
             definition: d.to_string(),
         }
     }
-
-    pub fn from(t: String, d: String) -> Self {
-        Self {
-            term: t,
-            definition: d,
-        }
-    }
 }
 
 pub struct Deck {
     pub name: String,
     // personal statistics? probably in storage separately
     pub cards: Vec<Card>,
+    pub id: Option<usize>,
 }
 
 impl Deck {
@@ -37,13 +31,15 @@ impl Deck {
         Self {
             name,
             cards: Vec::new(),
+            id: None,
         }
     }
 
     pub fn from_cards(cards: Vec<Card>) -> Self {
         Self {
-            name: String::new(),
+            name: String::from("Unnamed Deck"),
             cards,
+            id: None,
         }
     }
 }
@@ -58,6 +54,7 @@ pub fn example_deck() -> Deck {
             Card::new("el reloj", "the watch"),
             Card::new("el libro", "the book"),
         ],
+        id: None,
     }
 }
 

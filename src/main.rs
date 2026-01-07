@@ -3,10 +3,11 @@ use std::path::PathBuf;
 mod core;
 mod ui;
 
-use crate::core::deck::{example_deck, resolve_deck_source};
+use crate::core::deck::{Deck, get_deck, import_deck, resolve_deck_source};
+use crate::core::import::import_from_quizlet;
 use crate::core::string_distance::string_distance;
-use crate::ui::cards::cards;
-use crate::ui::learn::learn;
+use crate::ui::cards::cards_mode;
+use crate::ui::learn::learn_mode;
 
 #[derive(Parser)]
 #[command(name = "quizzy")]
@@ -22,8 +23,12 @@ pub enum Command {
         s2: String,
     },
     New {
-        deck: String,
+        name: String,
         file: Option<PathBuf>,
+    },
+    Import {
+        name: Option<String>,
+        url: Option<String>,
     },
     Add {
         deck: String,
@@ -82,9 +87,20 @@ fn main() {
         Command::Test { s1, s2 } => {
             println!("String Distance: {}", string_distance(s1, s2));
         }
-        Command::New { deck, file } => {
-            println!("creating deck by name: {deck}");
+        Command::New { name, file } => {
+            println!("creating deck by name: {}", name);
+            let deck = match file {
+                Some(p) => {
+                    let mut d = import_deck(p);
+                    d.name = name.to_string();
+                    d
+                }
+                None => Deck::named(name),
+            };
+            println!("Saving deck {}", deck.name); // double check name just in case
+            todo!("Need to implement storage.");
         }
+        Command::Import { name, url } => import_from_quizlet(name, url),
         Command::Add {
             deck,
             term,
@@ -98,7 +114,7 @@ fn main() {
         Command::List { deck } => match deck {
             Some(name) => {
                 println!("Listing out cards in deck: {}", name);
-                let deck = example_deck();
+                let deck = get_deck(resolve_deck_source(name.as_str()));
                 for c in deck.cards {
                     println!("{} -> {}", c.term, c.definition)
                 }
@@ -115,8 +131,8 @@ fn main() {
             written,
             multiplechoice,
             questions,
-        } => learn(
-            resolve_deck_source(deck.as_str()),
+        } => learn_mode(
+            get_deck(resolve_deck_source(deck.as_str())),
             nostats,
             terms,
             definitions,
@@ -124,7 +140,9 @@ fn main() {
             multiplechoice,
             questions,
         ),
-        Command::Cards { deck, shuffle } => cards(resolve_deck_source(deck.as_str()), shuffle),
+        Command::Cards { deck, shuffle } => {
+            cards_mode(get_deck(resolve_deck_source(deck.as_str())), shuffle)
+        }
         Command::Delete { deck } => {
             println!(
                 "Are you sure you want to delete from database?\n(This means removing the saved deck by this name)"

@@ -56,8 +56,8 @@ fn answer(
     }
 }
 
-pub fn learn(
-    src: DeckSource,
+pub fn learn_mode(
+    deck: Deck,
     nostats: bool,
     terms: bool,
     definitions: bool,
@@ -72,13 +72,12 @@ pub fn learn(
     let mut learned: HashSet<String> = HashSet::new();
     let mut still_learning: HashSet<String> = HashSet::new();
     let mut input = String::new();
-
-    let deck = get_deck(src);
     let mut rng = thread_rng();
     let mut bucket: Vec<Card> = Vec::new();
     let mut random_cards = deck.cards.to_vec();
     random_cards.shuffle(&mut rng);
 
+    println!("Beginning lesson: {}", deck.name);
     for i in 1..=questions {
         // TODO: eventually we want to prioritize asking questions for "still learning" cards
         let count = bucket.iter().count();
