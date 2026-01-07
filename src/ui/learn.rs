@@ -64,7 +64,7 @@ pub fn learn_mode(
     written: bool,
     multiple_choice: bool,
     questions: u8,
-) {
+) -> anyhow::Result<()> {
     println!("For options like -q=10 to set the number of questions, use `quizzy help learn`");
     // use a "bucket" of cards from the deck and refill bucket to get enough questions
     let mut correct: usize = 0;
@@ -277,4 +277,5 @@ pub fn learn_mode(
         still_learning.into_iter().collect::<Vec<_>>().join(", ")
     );
     // use nostats to decide whether to update the saved stats for this deck
+    Ok(())
 }

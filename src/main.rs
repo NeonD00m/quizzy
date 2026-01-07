@@ -2,7 +2,6 @@ use clap::{Parser, Subcommand, command};
 use std::path::PathBuf;
 mod core;
 mod ui;
-
 use crate::core::deck::{Deck, get_deck, import_deck, resolve_deck_source};
 use crate::core::import::import_from_quizlet;
 use crate::core::string_distance::string_distance;
@@ -81,11 +80,12 @@ pub enum Command {
     },
 }
 
-fn main() {
+fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Test { s1, s2 } => {
             println!("String Distance: {}", string_distance(s1, s2));
+            Ok(())
         }
         Command::New { name, file } => {
             println!("creating deck by name: {}", name);
@@ -98,7 +98,7 @@ fn main() {
                 None => Deck::named(name),
             };
             println!("Saving deck {}", deck.name); // double check name just in case
-            todo!("Need to implement storage.");
+            anyhow::bail!("Storage not yet implemented");
         }
         Command::Import { name, url } => import_from_quizlet(name, url),
         Command::Add {
@@ -107,9 +107,11 @@ fn main() {
             definition,
         } => {
             println!("Adding term ({term}) and definition ({definition}) to deck {deck}");
+            Ok(())
         }
         Command::Remove { deck, term } => {
             println!("Removing term ({term}) from deck {deck}");
+            Ok(())
         }
         Command::List { deck } => match deck {
             Some(name) => {
@@ -118,9 +120,11 @@ fn main() {
                 for c in deck.cards {
                     println!("{} -> {}", c.term, c.definition)
                 }
+                Ok(())
             }
             None => {
                 println!("Listing out saved decks:");
+                Ok(())
             }
         },
         Command::Learn {
@@ -149,7 +153,9 @@ fn main() {
             );
             println!(
                 "Would you also like to delete all stats associated with this deck?\n(They can be preserved and then accessed by `quizzy stats {deck}`"
-            )
+            );
+            Ok(())
         }
-    }
+    };
+    Ok(())
 }

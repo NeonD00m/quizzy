@@ -1,33 +1,161 @@
 use crate::core::deck::*;
+use crossterm::{
+    event::{KeyCode, KeyModifiers, read},
+    terminal::{disable_raw_mode, enable_raw_mode, size},
+};
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use std::cmp::max;
-use std::io::stdin;
+
+fn wrap_text(s: &str, max_width: usize) -> Vec<String> {
+    if max_width == 0 {
+        println!("What the helliante");
+        return vec!["".to_string()];
+    }
+
+    let mut lines: Vec<String> = Vec::new();
+    let mut current = String::new();
+
+    for word in s.split_whitespace() {
+        let word_len = word.chars().count();
+        let cur_len = current.chars().count();
+
+        if cur_len == 0 {
+            // current line empty: if word fits, push, otherwise break the word
+            if word_len <= max_width {
+                current.push_str(word);
+            } else {
+                // break long word into chunks
+                let mut start = 0;
+                let chars: Vec<char> = word.chars().collect();
+                while start < chars.len() {
+                    let end = usize::min(start + max_width, chars.len());
+                    let chunk: String = chars[start..end].iter().collect();
+                    lines.push(chunk);
+                    start = end;
+                }
+            }
+        } else {
+            // consider adding a space + word
+            if cur_len + 1 + word_len <= max_width {
+                current.push(' ');
+                current.push_str(word);
+            } else {
+                // flush current and start new line
+                lines.push(current);
+                current = String::new();
+                if word_len <= max_width {
+                    current.push_str(word);
+                } else {
+                    // break long word into chunks
+                    let mut start = 0;
+                    let chars: Vec<char> = word.chars().collect();
+                    while start < chars.len() {
+                        let end = usize::min(start + max_width, chars.len());
+                        let chunk: String = chars[start..end].iter().collect();
+                        lines.push(chunk);
+                        start = end;
+                    }
+                }
+            }
+        }
+    }
+
+    if !current.is_empty() {
+        lines.push(current);
+    }
+
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+
+    lines
+}
 
 fn display_card(c: &Card, flipped: bool) {
-    let len = max(c.term.len(), c.definition.len()) + 4;
+    let (term_w, _term_h) = size().unwrap_or((80, 24)); // 80x24 fallback
     let content = if flipped { &c.definition } else { &c.term };
+    let hidden = if !flipped { &c.definition } else { &c.term };
+    let term_width = term_w as usize;
 
-    // Use padding format to create the top/bottom bars without heap allocation
+    // sizing math
+    let max_content_width = term_width.saturating_sub(6).max(1);
+    let mut wrapped = wrap_text(content.trim(), max_content_width);
+    let wrapped_hidden = wrap_text(hidden.trim(), max_content_width);
+    // get the longest line length from either side of the card
+    let max_line_len = wrapped.iter().map(|l| l.chars().count()).max().unwrap_or(0);
+    let max_line_len2 = wrapped_hidden
+        .iter()
+        .map(|l| l.chars().count())
+        .max()
+        .unwrap_or(0);
+    // if the hidden side of the card has more lines, add vertical space
+    let diff = wrapped_hidden.len().saturating_sub(wrapped.len());
+    if diff > 0 {
+        let top = diff / 2; // round down
+        let bottom = diff - top; // round up
+        // let mut pre = Vec::with_capacity(top);
+        // pre.fill("".to_string());
+        wrapped.splice(0..0, vec!["".to_string(); top]);
+        for _ in 0..bottom {
+            wrapped.push("".to_string());
+        }
+    }
+    // finalize card length
+    let mut len = 4 + max(max_line_len, max_line_len2);
+    if len + 2 > term_width {
+        len = term_width.saturating_sub(2);
+    }
+
     println!("╭{:─^len$}╮", "", len = len);
-    println!("|{:^len$}|", content, len = len);
+    for line in wrapped.iter() {
+        println!("|{:^len$}|", line, len = len);
+    }
     println!("╰{:─^len$}╯", "", len = len);
 }
 
-pub fn cards_mode(deck: Deck, shuffle: bool) {
+fn cards_input() -> KeyCode {
+    while let Ok(event) = read() {
+        let Some(event) = event.as_key_press_event() else {
+            continue;
+        };
+        if event.modifiers == KeyModifiers::CONTROL
+            && (event.code == KeyCode::Char('c') || event.code == KeyCode::Char('c'))
+        {
+            return KeyCode::Esc;
+        }
+        if event.modifiers != KeyModifiers::NONE {
+            println!("Ignoring input due to mofidier {:}\r", event.modifiers);
+            continue;
+        }
+        if match event.code {
+            KeyCode::Esc => true,
+            KeyCode::Enter => true,
+            KeyCode::Char(' ') => true,
+            KeyCode::Left => true,
+            KeyCode::Right => true,
+            _ => false,
+        } {
+            return event.code;
+        }
+    }
+    return KeyCode::Esc;
+}
+
+pub fn cards_mode(deck: Deck, shuffle: bool) -> anyhow::Result<()> {
     println!("To see options like -s for shuffling, use `quizzy help cards`");
     let mut flipped = false;
     let mut index: usize = 0;
     let mut cards = deck.cards;
-    let mut input = String::new();
     let len = cards.len();
 
-    println!("Beginning practice: {}", deck.name);
+    println!("Beginning practice of {}. Press Escape to exit.", deck.name);
     if shuffle {
         let mut rng = thread_rng();
         cards.shuffle(&mut rng);
     }
 
+    enable_raw_mode()?;
     loop {
         let option = cards.get(index);
         if option.is_none() {
@@ -41,17 +169,11 @@ pub fn cards_mode(deck: Deck, shuffle: bool) {
             println!("Definition  (space to flip, a for previous, d/enter for next)")
         }
         display_card(&current, flipped);
-        input.clear();
-        while stdin().read_line(&mut input).is_err() {
-            println!("Error reading input, try again.");
-            input.clear();
-        }
-        input = input.to_lowercase().replace("\n", "").replace("\r", "");
-        match input.as_str() {
-            " " => {
+        match cards_input() {
+            KeyCode::Char(' ') => {
                 flipped = !flipped;
             }
-            "a" => {
+            KeyCode::Left => {
                 if index > 0 {
                     index -= 1;
                     flipped = false;
@@ -59,31 +181,25 @@ pub fn cards_mode(deck: Deck, shuffle: bool) {
                     println!("No previous card!");
                 }
             }
-            "d" => {
+            KeyCode::Right => {
                 index += 1;
                 flipped = false;
             }
-            _ => {
+            KeyCode::Enter => {
                 flipped = !flipped;
                 if !flipped {
                     index += 1;
                 }
             }
-        }
-        if index >= len {
-            println!("Done? [Y/n]");
-            input.clear();
-            while stdin().read_line(&mut input).is_err() {
-                println!("Error reading input, try again.");
-                input.clear();
-            }
-            input = input.to_lowercase().replace("\n", "").replace("\r", "");
-            if input.as_str() == "n" {
-                println!("Restarting from beginning.");
-                index = 0;
-            } else {
+            _ => {
                 break;
             }
         }
+        if index >= len {
+            println!("Restarting from beginning. Press Escape to exit.");
+            index = 0;
+        }
     }
+    disable_raw_mode()?;
+    return Ok(());
 }

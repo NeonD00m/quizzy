@@ -1,6 +1,13 @@
 use crate::{core::deck::*, ui::cards::cards_mode};
+use anyhow::Context;
 use serde::Deserialize;
-use std::io::stdin;
+use std::io::{self, Write, stdin, stdout};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+use std::thread;
+use std::time::Duration;
 use url::Url;
 
 #[derive(Deserialize)]
@@ -60,7 +67,7 @@ fn extract_set_id(url: &str) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-pub fn import_from_quizlet(name: Option<String>, url: Option<String>) {
+pub fn import_from_quizlet(name: Option<String>, url: Option<String>) -> anyhow::Result<()> {
     println!(
         "Quizzy currently only has the ability to import from Quizlet, let me know via github to create other options!"
     );
@@ -73,27 +80,56 @@ pub fn import_from_quizlet(name: Option<String>, url: Option<String>) {
         println!("https://quizlet.com/1234567890/some-study-deck-flash-cards/...");
         input.clear();
         stdin().read_line(&mut input).expect("Error reading input.");
-        input.clone()
+        input.trim().to_string()
     });
     let name = name.unwrap_or_else(|| {
         println!("What would you like to name the set?");
         input.clear();
         stdin().read_line(&mut input).expect("Error reading input.");
-        input.clone()
+        input.trim().to_string()
     });
 
-    let set_id = extract_set_id(url.trim())
-        .expect("Error parsing input. Check that the url looks similar to the example above.");
+    let set_id = extract_set_id(url.as_str())
+        .context("Error parsing input. Check that the url looks similar to the example above.")?;
 
-    // let mut response = reqwest::blocking::get(format!(
-    //     "https://quizlet.com/webapi/3.9/studiable-item-documents?filters%5BstudiableContainerId%5D={}&filters%5BstudiableContainerType%5D=1&perPage=1000&page=1",
-    //     set_id
-    // ));
+    // make a spinner a build a runtime for it
+    let spinner_running = Arc::new(AtomicBool::new(true));
+    let spinner_flag = spinner_running.clone();
+    let spinner_handle = thread::spawn(move || {
+        let mut count = 0u8;
+        while spinner_flag.load(Ordering::Relaxed) {
+            let ch = match count % 4 {
+                0 => "|",
+                1 => "/",
+                2 => "-",
+                _ => "\\",
+            };
+            print!("\rFetching {}", ch);
+            let _ = stdout().flush();
+            count = count.wrapping_add(1);
+            thread::sleep(Duration::from_millis(250));
+        }
+        print!("\r                   \r");
+        let _ = stdout().flush();
+    });
+    let rt = tokio::runtime::Runtime::new()?;
 
-    let deck = Deck::named(name);
+    let cards = rt
+        .block_on(fetch_cards(set_id.as_str()))
+        .context("Error fetching cards from Quizlet.")?;
+
+    spinner_running.store(false, Ordering::Relaxed);
+    let _ = spinner_handle.join();
+    println!("Successfully fetched {} cards from Quizlet.", cards.len());
+
+    let deck = Deck {
+        name,
+        cards,
+        id: Some(0),
+    };
 
     println!(
         "Since storage hasn't been implemented yet, you can just study with flashcards for now."
     );
-    cards_mode(deck, false);
+    cards_mode(deck, false)
 }
