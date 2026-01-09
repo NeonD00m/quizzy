@@ -120,7 +120,7 @@ fn cards_input() -> KeyCode {
             continue;
         };
         if event.modifiers == KeyModifiers::CONTROL
-            && (event.code == KeyCode::Char('c') || event.code == KeyCode::Char('c'))
+            && (event.code == KeyCode::Char('c') || event.code == KeyCode::Char('d'))
         {
             return KeyCode::Esc;
         }
@@ -149,7 +149,10 @@ pub fn cards_mode(deck: Deck, shuffle: bool) -> anyhow::Result<()> {
     let mut cards = deck.cards;
     let len = cards.len();
 
-    println!("Beginning practice of {}. Press Escape to exit.", deck.name);
+    println!(
+        "Beginning practice of {}. Press Escape at any time to end the session.",
+        deck.name
+    );
     if shuffle {
         let mut rng = thread_rng();
         cards.shuffle(&mut rng);

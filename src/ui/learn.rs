@@ -1,6 +1,10 @@
 use crate::core::deck::*;
 use crate::core::string_distance::string_distance;
 use core::f64;
+use crossterm::{
+    event::{KeyCode, KeyModifiers, read},
+    terminal::{disable_raw_mode, enable_raw_mode},
+};
 use rand::rngs::ThreadRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, thread_rng};
@@ -15,6 +19,36 @@ fn decide(condition1: bool, condition2: bool, rng: &mut ThreadRng, probability: 
     } else {
         rng.gen_bool(probability)
     }
+}
+
+fn choice_input() -> anyhow::Result<KeyCode> {
+    enable_raw_mode()?;
+    while let Ok(event) = read() {
+        let Some(event) = event.as_key_press_event() else {
+            continue;
+        };
+        if event.modifiers == KeyModifiers::CONTROL
+            && (event.code == KeyCode::Char('c') || event.code == KeyCode::Char('d'))
+        {
+            return Ok(KeyCode::Esc);
+        }
+        if event.modifiers != KeyModifiers::NONE {
+            println!("Ignoring input due to mofidier {:}\r", event.modifiers);
+            continue;
+        }
+        if match event.code {
+            KeyCode::Esc => true,
+            KeyCode::Char('1') => true,
+            KeyCode::Char('2') => true,
+            KeyCode::Char('3') => true,
+            KeyCode::Char('4') => true,
+            _ => false,
+        } {
+            return Ok(event.code);
+        }
+    }
+    disable_raw_mode()?;
+    return Ok(KeyCode::Esc);
 }
 
 /// Returns a vector including the original card and 3 others, randomly sorted
@@ -77,7 +111,10 @@ pub fn learn_mode(
     let mut random_cards = deck.cards.to_vec();
     random_cards.shuffle(&mut rng);
 
-    println!("Beginning lesson: {}", deck.name);
+    println!(
+        "Beginning lesson: {}. Press Escape at any time to end the session.",
+        deck.name
+    );
     for i in 1..=questions {
         // TODO: eventually we want to prioritize asking questions for "still learning" cards
         let count = bucket.iter().count();
@@ -104,6 +141,7 @@ pub fn learn_mode(
         if ask_written {
             print!("Type the answer or 'quit': ");
             stdout().flush().unwrap();
+            // TODO: utilize new input function
             loop {
                 input.clear();
                 if stdin().read_line(&mut input).is_err() {
