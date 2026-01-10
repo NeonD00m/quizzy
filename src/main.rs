@@ -82,7 +82,7 @@ pub enum Command {
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    match cli.command {
+    return match cli.command {
         Command::Test { s1, s2 } => {
             println!("String Distance: {}", string_distance(s1, s2));
             Ok(())
@@ -157,5 +157,4 @@ fn main() -> anyhow::Result<()> {
             Ok(())
         }
     };
-    Ok(())
 }

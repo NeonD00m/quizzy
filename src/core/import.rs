@@ -1,7 +1,8 @@
 use crate::{core::deck::*, ui::cards::cards_mode};
 use anyhow::Context;
+use rand::distributions::uniform::UniformFloat;
 use serde::Deserialize;
-use std::io::{self, Write, stdin, stdout};
+use std::io::{Write, stdin, stdout};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -20,6 +21,7 @@ struct ResponseItem {
     models: Vec<StudiableItem>,
 }
 
+#[allow(non_snake_case)]
 #[derive(Deserialize)]
 struct StudiableItem {
     cardSides: Vec<CardSide>,
@@ -30,12 +32,13 @@ struct CardSide {
     media: Vec<Media>,
 }
 
+#[allow(non_snake_case)]
 #[derive(Deserialize)]
 struct Media {
     plainText: String,
 }
 
-async fn fetch_cards(set_id: &str) -> anyhow::Result<Vec<Card>> {
+fn fetch_cards(set_id: &str) -> anyhow::Result<Vec<Card>> {
     let url = format!(
         "https://quizlet.com/webapi/3.4/studiable-item-documents\
     ?filters[studiableContainerId]={}\
@@ -44,17 +47,26 @@ async fn fetch_cards(set_id: &str) -> anyhow::Result<Vec<Card>> {
         set_id
     );
 
-    let res: ApiResponse = reqwest::get(url).await?.json().await?;
+    println!("URL:\n{}", url);
+    let resp = reqwest::blocking::get(url)?;
+    let text = &resp.text()?;
+
+    // how can I write the text to a file for debugging and parse it into json???
+    // write text variable to a file called response.txt
+    let mut file = std::fs::File::create("response.html")?;
+    file.write_all(text.as_bytes())?;
+    // but I can't use the response because it is moved when text() is called
+    // let res: ApiResponse = resp.json().context("json problem because it is html")?;
 
     let mut cards = Vec::new();
 
-    for response in res.responses {
-        for item in response.models {
-            let term = &item.cardSides[0].media[0].plainText;
-            let def = &item.cardSides[1].media[0].plainText;
-            cards.push(Card::new(term.as_str(), def.as_str()));
-        }
-    }
+    // for response in res.responses {
+    //     for item in response.models {
+    //         let term = &item.cardSides[0].media[0].plainText;
+    //         let def = &item.cardSides[1].media[0].plainText;
+    //         cards.push(Card::new(term.as_str(), def.as_str()));
+    //     }
+    // }
 
     Ok(cards)
 }
@@ -104,7 +116,7 @@ pub fn import_from_quizlet(name: Option<String>, url: Option<String>) -> anyhow:
                 2 => "-",
                 _ => "\\",
             };
-            print!("\rFetching {}", ch);
+            print!("\r{}", ch);
             let _ = stdout().flush();
             count = count.wrapping_add(1);
             thread::sleep(Duration::from_millis(250));
@@ -114,12 +126,12 @@ pub fn import_from_quizlet(name: Option<String>, url: Option<String>) -> anyhow:
     });
     let rt = tokio::runtime::Runtime::new()?;
 
-    let cards = rt
-        .block_on(fetch_cards(set_id.as_str()))
-        .context("Error fetching cards from Quizlet.")?;
+    let result = fetch_cards(set_id.as_str());
 
     spinner_running.store(false, Ordering::Relaxed);
     let _ = spinner_handle.join();
+
+    let cards = result.context("Error fetching cards from Quizlet.")?;
     println!("Successfully fetched {} cards from Quizlet.", cards.len());
 
     let deck = Deck {

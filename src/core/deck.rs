@@ -107,7 +107,7 @@ pub fn import_deck(path: PathBuf) -> Deck {
 
 pub fn get_deck(src: DeckSource) -> Deck {
     match src {
-        Named(n) => example_deck(),
+        Named(_n) => example_deck(),
         File(p) => import_deck(p),
     }
 }
