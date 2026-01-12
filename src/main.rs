@@ -27,7 +27,7 @@ pub enum Command {
     },
     Import {
         name: Option<String>,
-        url: Option<String>,
+        url_or_json: Option<String>,
     },
     Add {
         deck: String,
@@ -100,7 +100,7 @@ fn main() -> anyhow::Result<()> {
             println!("Saving deck {}", deck.name); // double check name just in case
             anyhow::bail!("Storage not yet implemented");
         }
-        Command::Import { name, url } => import_from_quizlet(name, url),
+        Command::Import { name, url_or_json } => import_from_quizlet(name, url_or_json),
         Command::Add {
             deck,
             term,

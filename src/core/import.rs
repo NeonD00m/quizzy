@@ -40,33 +40,57 @@ struct Media {
 
 fn fetch_cards(set_id: &str) -> anyhow::Result<Vec<Card>> {
     let url = format!(
-        "https://quizlet.com/webapi/3.4/studiable-item-documents\
-    ?filters[studiableContainerId]={}\
-    &filters[studiableContainerType]=1\
-    &perPage=1000&page=1",
+        "https://quizlet.com/webapi/3.9/studiable-item-documents?filters%5BstudiableContainerId%5D={}&filters%5BstudiableContainerType%5D=1&perPage=100&page=1",
         set_id
     );
 
-    println!("URL:\n{}", url);
-    let resp = reqwest::blocking::get(url)?;
-    let text = &resp.text()?;
+    // build a client first to simular a browser
+    let client = reqwest::blocking::Client::builder()
+        .redirect(reqwest::redirect::Policy::limited(10))
+        // .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+        .build()?;
 
-    // how can I write the text to a file for debugging and parse it into json???
-    // write text variable to a file called response.txt
-    let mut file = std::fs::File::create("response.html")?;
-    file.write_all(text.as_bytes())?;
-    // but I can't use the response because it is moved when text() is called
-    // let res: ApiResponse = resp.json().context("json problem because it is html")?;
+    let response = client.get(&url).header(
+            reqwest::header::USER_AGENT,
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.3",
+        )
+        .header(
+            reqwest::header::ACCEPT,
+            "application/json, text/javascript, */*; q=0.01",
+        ).header(
+            reqwest::header::REFERER,
+            "https://quizlet.com/",
+        ).send()?;
 
+    // debug :(
+    let status = response.status();
+    let final_url = response.url().to_string();
+    // let content_type = response.
+    //     .headers()
+    //     .get(reqwest::header::CONTENT_TYPE)
+    //     .and_then(|v| v.to_str().ok())
+    //     .unwrap_or("<none>");
+    let body_text = response.text()?;
+
+    eprintln!("DEBUG: status = {}", status);
+    eprintln!("DEBUG: final url = {}", final_url);
+    // eprintln!("DEBUG: content type = {}", content_type);
+    eprintln!(
+        "DEBUG: body (first 1000 chars):\n{}",
+        &body_text.chars().take(1000).collect::<String>()
+    );
+
+    let api: ApiResponse = serde_json::from_str(&body_text)
+        .context("Failed to parse JSON from Quizlet response. Check debug output above.")?;
     let mut cards = Vec::new();
 
-    // for response in res.responses {
-    //     for item in response.models {
-    //         let term = &item.cardSides[0].media[0].plainText;
-    //         let def = &item.cardSides[1].media[0].plainText;
-    //         cards.push(Card::new(term.as_str(), def.as_str()));
-    //     }
-    // }
+    for response in api.responses {
+        for item in response.models {
+            let term = &item.cardSides[0].media[0].plainText;
+            let def = &item.cardSides[1].media[0].plainText;
+            cards.push(Card::new(term.as_str(), def.as_str()));
+        }
+    }
 
     Ok(cards)
 }

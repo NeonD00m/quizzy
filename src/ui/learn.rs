@@ -141,7 +141,6 @@ pub fn learn_mode(
         if ask_written {
             print!("Type the answer or 'quit': ");
             stdout().flush().unwrap();
-            // TODO: utilize new input function
             loop {
                 input.clear();
                 if stdin().read_line(&mut input).is_err() {
@@ -177,123 +176,61 @@ pub fn learn_mode(
                 break;
             }
         } else {
+            // ask multiple choice
             let choices = get_multiple_choice_for_card(&c, &random_cards, &mut rng);
             if ask_term {
                 println!(
                     "(1) {}\t\t\t(2) {}\n(3) {}\t\t\t(4) {}",
-                    choices[0].definition, //.get(0).expect("Choice 1 error.").definition,
-                    choices[1].definition, //.get(1).expect("Choice 2 error").definition,
-                    choices[2].definition, //.get(2).expect("Choice 3 error.").definition,
-                    choices[3].definition, //.get(3).expect("Choice 4 error").definition
+                    choices[0].definition,
+                    choices[1].definition,
+                    choices[2].definition,
+                    choices[3].definition,
                 );
             } else {
                 println!(
                     "(1) {}\t\t\t(2) {}\n(3) {}\t\t\t(4) {}",
-                    choices[0].term, //.get(0).expect("Choice 1 error.").term,
-                    choices[1].term, //.get(1).expect("Choice 2 error").term,
-                    choices[2].term, //.get(2).expect("Choice 3 error.").term,
-                    choices[3].term, //.get(3).expect("Choice 4 error").term
+                    choices[0].term, choices[1].term, choices[2].term, choices[3].term,
                 );
             }
             print!("Type 1-4 or 'quit': ");
-            stdout().flush().unwrap();
-            loop {
-                input.clear();
-                if stdin().read_line(&mut input).is_err() {
-                    println!("Error reading input, try again.");
-                    input.clear();
-                    continue;
-                }
-                let response = input.trim();
-                if response == "quit" {
+            let n = match choice_input()? {
+                KeyCode::Char('1') => 0,
+                KeyCode::Char('2') => 1,
+                KeyCode::Char('3') => 2,
+                KeyCode::Char('4') => 3,
+                _ => {
+                    println!("should be exiting");
                     break;
                 }
-                let n: usize = match response {
-                    "1" => 0,
-                    "2" => 1,
-                    "3" => 2,
-                    "4" => 3,
-                    _ => {
-                        println!("Unrecognized response, please try again.");
-                        continue;
-                    }
-                };
-                if choices.get(n).is_none() {
-                    continue;
-                }
-                let chosen = choices.get(n).expect("Expected valid choice.");
-                let is_right = if ask_term {
-                    c.definition == chosen.definition
-                } else {
-                    c.term == chosen.term
-                };
-                if is_right {
-                    println!("✓: {}\n", response);
-                } else {
-                    println!(
-                        "X: {}\t\t\t✓: {}\n",
-                        response,
-                        if ask_term {
-                            c.definition.as_str()
-                        } else {
-                            c.term.as_str()
-                        }
-                    );
-                }
-                answered += 1;
-                answer(
-                    &is_right,
-                    &c,
-                    &mut correct,
-                    &mut learned,
-                    &mut still_learning,
-                );
-                break;
-
-                // match response.parse::<u8>() {
-                //     Ok(n) => {
-                //         if n == 0 || n > 4 {
-                //             println!("Must choose a number between 1 and 4.");
-                //             continue;
-                //         }
-                //         let chosen = choices
-                //             .get((n - 1) as usize)
-                //             .expect("No card exists at given choice answer.");
-                //         // TODO: Implement a better algorithm to detect whether an answer is right enough
-                //         let is_right = if ask_term {
-                //             c.definition == chosen.definition
-                //         } else {
-                //             c.term == chosen.term
-                //         };
-                //         if is_right {
-                //             println!("✓: {}\n", response);
-                //         } else {
-                //             println!(
-                //                 "X: {}\t\t\t✓: {}\n",
-                //                 response,
-                //                 if ask_term {
-                //                     c.definition.as_str()
-                //                 } else {
-                //                     c.term.as_str()
-                //                 }
-                //             );
-                //         }
-                //         answered += 1;
-                //         answer(
-                //             &is_right,
-                //             &c,
-                //             &mut correct,
-                //             &mut learned,
-                //             &mut still_learning,
-                //         );
-                //         break;
-                //     }
-                //     Err(e) => {
-                //         println!("Error parsing number: {}", e);
-                //         continue;
-                //     }
-                // }
+            };
+            if choices.get(n).is_none() {
+                continue;
             }
+            let chosen = choices.get(n).expect("Expected valid choice.");
+            let expected = if ask_term {
+                c.definition.clone()
+            } else {
+                c.term.clone()
+            };
+            let response = if ask_term {
+                chosen.definition.clone()
+            } else {
+                chosen.term.clone()
+            };
+            let is_right = expected == response;
+            if is_right {
+                println!("✓: {}\n", response);
+            } else {
+                println!("X: {}\t\t\t✓: {}\n", response, expected);
+            }
+            answered += 1;
+            answer(
+                &is_right,
+                &c,
+                &mut correct,
+                &mut learned,
+                &mut still_learning,
+            );
         }
     }
 
