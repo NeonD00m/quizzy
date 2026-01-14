@@ -21,6 +21,7 @@ fn decide(condition1: bool, condition2: bool, rng: &mut ThreadRng, probability: 
     }
 }
 
+/// ALWAYS DISABLE RAW MODE AFTER
 fn choice_input() -> anyhow::Result<KeyCode> {
     enable_raw_mode()?;
     while let Ok(event) = read() {
@@ -47,27 +48,70 @@ fn choice_input() -> anyhow::Result<KeyCode> {
             return Ok(event.code);
         }
     }
-    disable_raw_mode()?;
-    println!("[[[[[[Should have disabled raw mode]]]]]]");
     return Ok(KeyCode::Esc);
 }
 
 /// Returns a vector including the original card and 3 others, randomly sorted
-fn get_multiple_choice_for_card(c: &Card, _cards: &Vec<Card>, _rng: &mut ThreadRng) -> Vec<Card> {
-    vec![
-        Card::new("t1X", "d1X"),
-        Card::new("t2X", "d2X"),
-        c.clone(),
-        Card::new("t3X", "d3X"),
-    ]
-    // let mut choices: Vec<Card> = Vec::new();
-    // // pick up to 3 other random distinct cards
-    // let mut others: Vec<Card> = cards.iter().filter(|x| x.term != c.term).cloned().collect();
-    // others.shuffle(rng);
-    // choices.extend(others.into_iter().take(3));
-    // choices.push(c.clone());
-    // choices.shuffle(rng);
-    // choices
+pub fn get_multiple_choice_for_card(
+    c: &Card,
+    cards: &Vec<Card>,
+    rng: &mut ThreadRng,
+    ask_term: bool,
+) -> Vec<Card> {
+    let expected = if ask_term {
+        c.definition.clone()
+    } else {
+        c.term.clone()
+    };
+
+    // build a list of candidate cards (exclude the card itself)
+    let mut candidates: Vec<(u8, Card)> = cards
+        .iter()
+        .filter(|other| other.term != c.term && other.definition != c.definition)
+        .map(|other| {
+            let candidate_str = if ask_term {
+                other.definition.clone()
+            } else {
+                other.term.clone()
+            };
+            let dist = string_distance(candidate_str, expected.clone());
+            (dist, other.clone())
+        })
+        .collect();
+
+    // sort ascending by distance (most similar first)
+    candidates.sort_by_key(|(dist, _)| *dist);
+
+    // TODO: do non-deterministicly weighted by similarity
+    let mut choices: Vec<Card> = candidates
+        .into_iter()
+        .take(3)
+        .map(|(_, card)| card)
+        .collect();
+
+    // if fewer than 3 similar choices found, fill randomly
+    if choices.len() < 3 {
+        let mut additional: Vec<Card> = cards
+            .iter()
+            .filter(|other| other.term != c.term || other.definition != c.definition)
+            .filter(|other| {
+                !choices
+                    .iter()
+                    .any(|ch| ch.term == other.term && ch.definition == other.definition)
+            })
+            .cloned()
+            .collect();
+        additional.shuffle(rng);
+        for card in additional.into_iter().take(3 - choices.len()) {
+            choices.push(card);
+        }
+    }
+
+    // add the correct card and shuffle
+    choices.push(c.clone());
+    choices.shuffle(rng);
+
+    choices
 }
 
 /// Needs to be able to take in whatever context and card then update state like 'still_learning'
@@ -93,7 +137,7 @@ fn answer(
 
 pub fn learn_mode(
     deck: Deck,
-    nostats: bool,
+    _nostats: bool,
     terms: bool,
     definitions: bool,
     written: bool,
@@ -116,7 +160,7 @@ pub fn learn_mode(
         "Beginning lesson: {}. Press Escape at any time to end the session.",
         deck.name
     );
-    for i in 1..=questions {
+    'questions: for i in 1..=questions {
         // TODO: eventually we want to prioritize asking questions for "still learning" cards
         let count = bucket.iter().count();
         if count < 1 {
@@ -137,7 +181,7 @@ pub fn learn_mode(
         if ask_term {
             println!("Term: {}\t\t\t({i}/{questions})", c.term);
         } else {
-            println!("Definitions: {}\t\t\t({i}/{questions})", c.definition);
+            println!("Definition: {}\t\t\t({i}/{questions})", c.definition);
         }
         if ask_written {
             print!("Type the answer or 'quit': ");
@@ -151,7 +195,7 @@ pub fn learn_mode(
                 }
                 let response = input.trim();
                 if response == "quit" {
-                    break;
+                    break 'questions;
                 }
                 // TODO: check if typed answer is close enough
                 let expected = if ask_term {
@@ -159,7 +203,7 @@ pub fn learn_mode(
                 } else {
                     c.term.clone()
                 };
-                let is_right = (expected.len() as f64 * 0.2)
+                let is_right = (expected.len() as f64 * 0.3f64)
                     > (string_distance(response.to_string(), expected.clone()) as f64);
                 if is_right {
                     println!("✓: {}\n", expected);
@@ -178,7 +222,7 @@ pub fn learn_mode(
             }
         } else {
             // ask multiple choice
-            let choices = get_multiple_choice_for_card(&c, &random_cards, &mut rng);
+            let choices = get_multiple_choice_for_card(&c, &random_cards, &mut rng, ask_term);
             if ask_term {
                 println!(
                     "(1) {}\t\t\t(2) {}\n(3) {}\t\t\t(4) {}",
@@ -193,7 +237,7 @@ pub fn learn_mode(
                     choices[0].term, choices[1].term, choices[2].term, choices[3].term,
                 );
             }
-            print!("Type 1-4 or 'quit': ");
+            print!("Type 1-4 or press Esc to exit: ");
             let n = match choice_input()? {
                 KeyCode::Char('1') => 0,
                 KeyCode::Char('2') => 1,
@@ -201,9 +245,11 @@ pub fn learn_mode(
                 KeyCode::Char('4') => 3,
                 _ => {
                     println!("should be exiting");
-                    break;
+                    disable_raw_mode()?;
+                    break 'questions;
                 }
             };
+            disable_raw_mode()?;
             if choices.get(n).is_none() {
                 continue;
             }

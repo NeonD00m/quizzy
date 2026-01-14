@@ -2,11 +2,11 @@ use clap::{Parser, Subcommand, command};
 use std::path::PathBuf;
 mod core;
 mod ui;
-use crate::core::deck::{Deck, get_deck, import_deck, resolve_deck_source};
-use crate::core::import::import_from_quizlet;
-use crate::core::string_distance::string_distance;
-use crate::ui::cards::cards_mode;
-use crate::ui::learn::learn_mode;
+use quizzy::core::deck::{Deck, DeckSource, get_deck, resolve_deck_source};
+use quizzy::core::import::import_from_quizlet;
+use quizzy::core::string_distance::string_distance;
+use quizzy::ui::cards::cards_mode;
+use quizzy::ui::learn::learn_mode;
 
 #[derive(Parser)]
 #[command(name = "quizzy")]
@@ -23,10 +23,12 @@ pub enum Command {
     },
     New {
         name: String,
+        // pass in a file with tab separated terms and definitions
         file: Option<PathBuf>,
     },
     Import {
         name: Option<String>,
+        // using url requires browser available, json can be used directly
         url_or_json: Option<String>,
     },
     Add {
@@ -91,7 +93,7 @@ fn main() -> anyhow::Result<()> {
             println!("creating deck by name: {}", name);
             let deck = match file {
                 Some(p) => {
-                    let mut d = import_deck(p);
+                    let mut d = get_deck(DeckSource::File(p));
                     d.name = name.to_string();
                     d
                 }

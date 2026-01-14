@@ -11,40 +11,39 @@ pub fn string_distance(given: String, expected: String) -> u8 {
         return given.len() as u8;
     }
 
-    let m = given.len();
-    let n = expected.len();
+    let s: Vec<char> = given.chars().collect();
+    let t: Vec<char> = expected.chars().collect();
+
+    let m = s.len();
+    let n = t.len();
 
     if m > n {
         return string_distance(expected, given);
     }
-    let mut v0: Vec<u8> = Vec::with_capacity(n + 1);
-    let mut v1: Vec<u8> = Vec::with_capacity(n + 1);
-    let s: Vec<char> = given.chars().collect();
-    let t: Vec<char> = given.chars().collect();
 
-    {
-        let mut i: u8 = 0;
-        v0.fill_with(|| {
-            i += 1;
-            return i - 1;
-        });
-        v1.fill(0); // make sure vector is not 'empty' even though allocated
-    }
+    let mut v0: Vec<usize> = (0..=n).collect();
+    let mut v1: Vec<usize> = vec![0usize; n + 1];
 
-    for i in 0..(m - 1) {
+    for i in 0..m {
         // if edit distance is deleting chars to match empty t
-        v1[0] = i as u8 + 1;
+        v1[0] = i + 1;
 
-        for j in 0..(n - 1) {
-            let deletion_cost = v0[j + 1] + 1;
-            let insertion_cost = v1[j] + 1;
-            let substitution_cost = v0[j] + (if s[i] == t[j] { 0 } else { 1 });
+        for j in 0..n {
+            let deletion_cost = v0[j + 1].saturating_add(1);
+            let insertion_cost = v1[j].saturating_add(1);
+            let substitution_cost = v0[j].saturating_add(if s[i] == t[j] { 0 } else { 1 });
             v1[j + 1] = min(min(deletion_cost, insertion_cost), substitution_cost);
         }
 
-        v0 = v1;
-        v1 = Vec::with_capacity(n + 1);
+        // omg holy improvement over what I was previously doing
+        std::mem::swap(&mut v0, &mut v1);
     }
 
-    return v0[n];
+    // bro if string distance > 255 we don't care any more
+    let dist_usize = v0[n];
+    if dist_usize > u8::MAX as usize {
+        u8::MAX
+    } else {
+        dist_usize as u8
+    }
 }

@@ -3,6 +3,13 @@ name = "quizzy"
 version = "0.1.0"
 edition = "2024"
 
+[[bench]]
+name = "mc_bench"
+harness = false
+
+[dev-dependencies]
+criterion = "0.8"
+
 [dependencies]
 clap = { version = "4.5.51", features = ["derive"] }
 rand = "0.8"
@@ -15,4 +22,4 @@ reqwest = { version = "0.12", features = ["json", "blocking"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 url = "2.5.7"
 anyhow = "1.0.100"
-thiserror = "2.0.17"
+# thiserror = "2.0.17"

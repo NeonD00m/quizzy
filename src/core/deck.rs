@@ -1,4 +1,5 @@
 use crate::core::deck::DeckSource::*;
+use serde::Deserialize;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -63,6 +64,17 @@ pub enum DeckSource {
     File(PathBuf),
 }
 
+#[derive(Deserialize)]
+struct JsonDeck {
+    cards: Vec<JsonCard>,
+}
+
+#[derive(Deserialize)]
+struct JsonCard {
+    term: String,
+    definition: String,
+}
+
 pub fn resolve_deck_source(arg: &str) -> DeckSource {
     let path = Path::new(arg);
 
@@ -86,7 +98,7 @@ pub fn resolve_deck_source(arg: &str) -> DeckSource {
     }
 }
 
-pub fn import_deck(path: PathBuf) -> Deck {
+fn read_deck_tsv(path: PathBuf) -> Deck {
     let file = File::open(path.as_path()).expect("Failed to open file.");
     Deck::from_cards(
         BufReader::new(file)
@@ -105,9 +117,62 @@ pub fn import_deck(path: PathBuf) -> Deck {
     )
 }
 
+fn read_deck_csv(path: PathBuf) -> Deck {
+    let file = File::open(path.as_path()).expect("Failed to open file.");
+    Deck::from_cards(
+        BufReader::new(file)
+            .lines()
+            .filter_map(|line| {
+                if let Ok(line) = line {
+                    let mut parts = line.split(",");
+                    let term = parts.next()?;
+                    let definition = parts.next()?;
+                    Some(Card::new(term, definition))
+                } else {
+                    None
+                }
+            })
+            .collect(),
+    )
+}
+
+fn read_deck_json(path: PathBuf) -> Deck {
+    let file = File::open(path.as_path()).expect("Failed to open file.");
+    let reader = BufReader::new(file);
+    let json_deck: JsonDeck = serde_json::from_reader(reader).expect("Failed to parse JSON deck.");
+    Deck::from_cards(
+        json_deck
+            .cards
+            .into_iter()
+            .map(|jc| Card::new(&jc.term, &jc.definition))
+            .collect(),
+    )
+}
+
+fn detect_read(path: PathBuf) -> Deck {
+    let ext = path
+        .extension()
+        .and_then(|x| x.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    match ext.as_str() {
+        "csv" => read_deck_csv(path),
+        "tsv" => read_deck_tsv(path),
+        "json" => read_deck_json(path),
+        "txt" => read_deck_tsv(path),
+        _ => {
+            println!(
+                "Unknown file extension '{}', defaulting to TSV format.",
+                ext
+            );
+            read_deck_tsv(path)
+        }
+    }
+}
+
 pub fn get_deck(src: DeckSource) -> Deck {
     match src {
         Named(_n) => example_deck(),
-        File(p) => import_deck(p),
+        File(p) => detect_read(p),
     }
 }

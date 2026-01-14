@@ -1,6 +1,5 @@
 use crate::{core::deck::*, ui::cards::cards_mode};
 use anyhow::Context;
-use rand::distributions::uniform::UniformFloat;
 use serde::Deserialize;
 use std::io::{Write, stdin, stdout};
 use std::sync::{
@@ -148,7 +147,7 @@ pub fn import_from_quizlet(name: Option<String>, url: Option<String>) -> anyhow:
         print!("\r                   \r");
         let _ = stdout().flush();
     });
-    let rt = tokio::runtime::Runtime::new()?;
+    let _rt = tokio::runtime::Runtime::new()?;
 
     let result = fetch_cards(set_id.as_str());
 
