@@ -7,8 +7,11 @@ quizzy import <optional-name> <optional-quizlet-set-url>
 ```
 Replace `<quizlet-set-url>` with the actual URL of the Quizlet set you want to import. Quizzy will then provide you a link to open in a browser and from there you must save the file from your browser into a json file. Then provide the path to that file when prompted or call `quizzy import <name> <api-json-file>` with the path to the saved json file any time.
 
-[!CAUTION]
+[!NOTE]
 `quizzy import` only works with json files formatted like the output from the generated Quizlet link, mixing up json formats between `quizzy import` and `quizzy new` will lead to errors.
+
+[!CAUTION]
+Decks with images may break the json parsing, if you encounter an issue please just notify me and send the api's json file so I can improve the parsing structs.
 
 
 
