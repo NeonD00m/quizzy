@@ -98,9 +98,9 @@ pub fn resolve_deck_source(arg: &str) -> DeckSource {
     }
 }
 
-fn read_deck_tsv(path: PathBuf) -> Deck {
-    let file = File::open(path.as_path()).expect("Failed to open file.");
-    Deck::from_cards(
+fn read_deck_tsv(path: PathBuf) -> anyhow::Result<Deck> {
+    let file = File::open(path.as_path()).context("Failed to open file.")?;
+    Ok(Deck::from_cards(
         BufReader::new(file)
             .lines()
             .filter_map(|line| {
@@ -114,12 +114,12 @@ fn read_deck_tsv(path: PathBuf) -> Deck {
                 }
             })
             .collect(),
-    )
+    ))
 }
 
-fn read_deck_csv(path: PathBuf) -> Deck {
-    let file = File::open(path.as_path()).expect("Failed to open file.");
-    Deck::from_cards(
+fn read_deck_csv(path: PathBuf) -> anyhow::Result<Deck> {
+    let file = File::open(path.as_path()).context("Failed to open file.")?;
+    Ok(Deck::from_cards(
         BufReader::new(file)
             .lines()
             .filter_map(|line| {
@@ -133,23 +133,24 @@ fn read_deck_csv(path: PathBuf) -> Deck {
                 }
             })
             .collect(),
-    )
+    ))
 }
 
-fn read_deck_json(path: PathBuf) -> Deck {
-    let file = File::open(path.as_path()).expect("Failed to open file.");
+fn read_deck_json(path: PathBuf) -> anyhow::Result<Deck> {
+    let file = File::open(path.as_path()).context("Failed to open file.")?;
     let reader = BufReader::new(file);
-    let json_deck: JsonDeck = serde_json::from_reader(reader).expect("Failed to parse JSON deck.");
-    Deck::from_cards(
+    let json_deck: JsonDeck =
+        serde_json::from_reader(reader).context("Failed to parse JSON deck.")?;
+    Ok(Deck::from_cards(
         json_deck
             .cards
             .into_iter()
             .map(|jc| Card::new(&jc.term, &jc.definition))
             .collect(),
-    )
+    ))
 }
 
-fn detect_read(path: PathBuf) -> Deck {
+fn detect_read(path: PathBuf) -> anyhow::Result<Deck> {
     let ext = path
         .extension()
         .and_then(|x| x.to_str())
@@ -170,9 +171,9 @@ fn detect_read(path: PathBuf) -> Deck {
     }
 }
 
-pub fn get_deck(src: DeckSource) -> Deck {
+pub fn get_deck(src: DeckSource) -> anyhow::Result<Deck> {
     match src {
-        Named(_n) => example_deck(),
+        Named(_n) => Ok(example_deck()),
         File(p) => detect_read(p),
     }
 }

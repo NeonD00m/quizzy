@@ -93,7 +93,7 @@ fn main() -> anyhow::Result<()> {
             println!("creating deck by name: {}", name);
             let deck = match file {
                 Some(p) => {
-                    let mut d = get_deck(DeckSource::File(p));
+                    let mut d = get_deck(DeckSource::File(p))?;
                     d.name = name.to_string();
                     d
                 }
@@ -108,17 +108,20 @@ fn main() -> anyhow::Result<()> {
             term,
             definition,
         } => {
-            println!("Adding term ({term}) and definition ({definition}) to deck {deck}");
+            println!(
+                "Adding term ({}) and definition ({}) to deck {}",
+                term, definition, deck
+            );
             Ok(())
         }
         Command::Remove { deck, term } => {
-            println!("Removing term ({term}) from deck {deck}");
+            println!("Removing term ({}) from deck {}", term, deck);
             Ok(())
         }
         Command::List { deck } => match deck {
             Some(name) => {
                 println!("Listing out cards in deck: {}", name);
-                let deck = get_deck(resolve_deck_source(name.as_str()));
+                let deck = get_deck(resolve_deck_source(name.as_str()))?;
                 for c in deck.cards {
                     println!("{} -> {}", c.term, c.definition)
                 }
@@ -138,7 +141,7 @@ fn main() -> anyhow::Result<()> {
             multiplechoice,
             questions,
         } => learn_mode(
-            get_deck(resolve_deck_source(deck.as_str())),
+            get_deck(resolve_deck_source(deck.as_str()))?,
             nostats,
             terms,
             definitions,
@@ -147,7 +150,7 @@ fn main() -> anyhow::Result<()> {
             questions,
         ),
         Command::Cards { deck, shuffle } => {
-            cards_mode(get_deck(resolve_deck_source(deck.as_str())), shuffle)
+            cards_mode(get_deck(resolve_deck_source(deck.as_str()))?, shuffle)
         }
         Command::Delete { deck } => {
             println!(

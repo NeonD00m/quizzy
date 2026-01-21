@@ -1,4 +1,5 @@
 use crate::core::deck::*;
+use anyhow::Context;
 use crossterm::{
     event::{KeyCode, KeyModifiers, read},
     terminal::{disable_raw_mode, enable_raw_mode, size},
@@ -165,7 +166,7 @@ pub fn cards_mode(deck: Deck, shuffle: bool) -> anyhow::Result<()> {
             println!("No card found at index {}, exiting.", index);
             break;
         }
-        let current = option.unwrap();
+        let current = option.context("Expected current card since option was not none.")?;
         if !flipped {
             println!("Term        (space/enter to flip, a for previous, d for next)")
         } else {

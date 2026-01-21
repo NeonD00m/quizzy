@@ -1,5 +1,6 @@
 use crate::core::deck::*;
 use crate::core::string_distance::string_distance;
+use anyhow::Context;
 use core::f64;
 use crossterm::{
     event::{KeyCode, KeyModifiers, read},
@@ -169,7 +170,7 @@ pub fn learn_mode(
         }
         let c = bucket
             .pop()
-            .expect(format!("None value in bucket when count is {count}").as_str());
+            .context(format!("None value in bucket when count is {}", count))?;
 
         let ask_term: bool = decide(terms, definitions, &mut rng, 0.5);
         let ask_written: bool = decide(
@@ -185,7 +186,7 @@ pub fn learn_mode(
         }
         if ask_written {
             print!("Type the answer or 'quit': ");
-            stdout().flush().unwrap();
+            stdout().flush().context("Failed to flush output.")?;
             loop {
                 input.clear();
                 if stdin().read_line(&mut input).is_err() {
@@ -253,7 +254,7 @@ pub fn learn_mode(
             if choices.get(n).is_none() {
                 continue;
             }
-            let chosen = choices.get(n).expect("Expected valid choice.");
+            let chosen = choices.get(n).context("Expected valid choice.")?;
             let expected = if ask_term {
                 c.definition.clone()
             } else {
@@ -281,6 +282,7 @@ pub fn learn_mode(
         }
     }
 
+    // use nostats to decide whether to update the saved stats for this deck
     println!("Continue to view results:");
     input.clear();
     if let Err(e) = stdin().read_line(&mut input) {
@@ -298,6 +300,5 @@ pub fn learn_mode(
         still_learning.len(),
         still_learning.into_iter().collect::<Vec<_>>().join(", ")
     );
-    // use nostats to decide whether to update the saved stats for this deck
     Ok(())
 }

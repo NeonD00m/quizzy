@@ -7,7 +7,7 @@ use std::hint::black_box;
 // measure the time to generate choices for each card once
 fn bench_mc_all_cards(c: &mut Criterion) {
     // adjust the relative path to your econ.txt location in the repo
-    let deck = get_deck(resolve_deck_source("econ.txt"));
+    let deck = get_deck(resolve_deck_source("econ.txt")).expect("Failed to get deck.");
     let cards = deck.cards;
     let mut rng = thread_rng();
 
@@ -26,7 +26,7 @@ fn bench_mc_all_cards(c: &mut Criterion) {
 
 // as an example, measure time for a single random card
 fn bench_mc_single_card(c: &mut Criterion) {
-    let deck = get_deck(resolve_deck_source("econ.txt"));
+    let deck = get_deck(resolve_deck_source("econ.txt")).expect("Failed to get deck.");
     let mut rng = thread_rng();
     let mut cards = deck.cards;
     cards.shuffle(&mut rng);
