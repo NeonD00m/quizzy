@@ -11,15 +11,15 @@ harness = false
 criterion = "0.8"
 
 [dependencies]
-clap = { version = "4.5.51", features = ["derive"] }
-rand = "0.8"
+clap = { version = "4.5.51", features = ["derive"] } # for clapping
+rand = "0.8" # for rand'ing
 rusqlite = "0.38.0" # for storage of stats and sets
-serde = { version = "1", features = ["derive"] }
-# chrono = { version = "0.4", features = ["serde"] } # would be cool to use for spaced repetition
-crossterm = "0.29.0" # would be cool to use instead of current input system
-serde_json = "1.0.148"
-reqwest = { version = "0.12", features = ["json", "blocking"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-url = "2.5.7"
-anyhow = "1.0.100"
+serde = { version = "1", features = ["derive"] } # for serde'ing
+chrono = { version = "0.4", features = ["serde"] } # would be cool to use for spaced repetition
+crossterm = "0.29.0" # nicer input handling when it works
+serde_json = "1.0.148" # separate json serde package
+reqwest = { version = "0.12", features = ["json", "blocking"] } # only necessary for APIs
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] } # for old API needs
+url = "2.5.7" # for reading URLs
+anyhow = "1.0.100" # convenient error stuff
 # thiserror = "2.0.17"
