@@ -1,7 +1,10 @@
 use crate::core::deck::{Card, Deck};
 use chrono::Utc;
-use rusqlite::{Connection, Result, params};
+use rusqlite::{Connection, OpenFlags, Result, params};
 use std::collections::HashMap;
+use std::env;
+use std::fs;
+use std::path::PathBuf;
 
 /// Schema initialized by `init_db`
 const SCHEMA: &str = r#"
@@ -55,6 +58,61 @@ CREATE TABLE IF NOT EXISTS user_profile (
 
 fn now_secs() -> i64 {
     Utc::now().timestamp()
+}
+
+// Returns the path to the database file to use.
+// Priority:
+//  1) Environment variable QUIZZY_DB
+//  2) OS-specific user data directory under "quizzy/quizzy.db"
+pub fn db_path_from_env_or_default() -> PathBuf {
+    // 1) Env override
+    if let Ok(p) = env::var("QUIZZY_DB") {
+        return PathBuf::from(p);
+    }
+
+    // 2) Use OS data dir
+    // `dirs_next::data_local_dir()` returns a directory appropriate for app-local data.
+    // On Windows: {FOLDERID_RoamingAppData}\quizzy   (or use data_dir() if you prefer roaming)
+    // On Linux: ~/.local/share/quizzy
+    // On macOS: ~/Library/Application Support/quizzy
+    let mut base = dirs_next::data_local_dir()
+        .or_else(|| dirs_next::data_dir()) // fallback
+        .unwrap_or_else(|| {
+            // final fallback: current directory
+            env::current_dir().expect("Unable to determine current directory for DB fallback")
+        });
+
+    base.push("quizzy");
+    fs::create_dir_all(&base).ok(); // ignore error here; opening DB will surface issues
+
+    base.push("quizzy.db");
+    base
+}
+
+/// Open (or create) the SQLite database at the default path (or env override),
+/// apply some safe pragmas and return the `Connection`.
+pub fn open_or_create_connection() -> Result<Connection> {
+    let path = db_path_from_env_or_default();
+
+    // Ensure parent dir exists
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Null, Box::new(e))
+        })?;
+    }
+
+    // Open read-write and create if missing. You can set flags to control locking mode if needed.
+    let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE;
+    let conn = Connection::open_with_flags(&path, flags)?;
+
+    // Set some connection-level pragmas / options that help with multi-reader/multi-writer usage:
+    // - busy_timeout avoids immediate failures while another writer is committing
+    conn.busy_timeout(std::time::Duration::from_secs(5))?;
+
+    // Call your init_db (schema + pragmas). Make sure that function is in scope.
+    init_db(&conn)?; // ensure this function is defined in the same module
+
+    Ok(conn)
 }
 
 /// Initialize the database connection: pragmas and schema
