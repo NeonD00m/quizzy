@@ -1,6 +1,7 @@
 use crate::core::deck::{Card, Deck};
+use anyhow::{Context, Result};
 use chrono::Utc;
-use rusqlite::{Connection, OpenFlags, Result, params};
+use rusqlite::{Connection, OpenFlags, params};
 use std::collections::HashMap;
 use std::env;
 use std::fs;
@@ -83,7 +84,8 @@ pub fn db_path_from_env_or_default() -> PathBuf {
         });
 
     base.push("quizzy");
-    fs::create_dir_all(&base).ok(); // ignore error here; opening DB will surface issues
+    // best-effort create here; real error surfaced when opening connection
+    let _ = fs::create_dir_all(&base);
 
     base.push("quizzy.db");
     base
@@ -96,21 +98,21 @@ pub fn open_or_create_connection() -> Result<Connection> {
 
     // Ensure parent dir exists
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| {
-            rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Null, Box::new(e))
-        })?;
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create database parent directory {:?}", parent))?;
     }
 
-    // Open read-write and create if missing. You can set flags to control locking mode if needed.
+    // Open read-write and create if missing.
     let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE;
-    let conn = Connection::open_with_flags(&path, flags)?;
+    let conn = Connection::open_with_flags(&path, flags)
+        .with_context(|| format!("failed to open sqlite database at {:?}", path))?;
 
-    // Set some connection-level pragmas / options that help with multi-reader/multi-writer usage:
-    // - busy_timeout avoids immediate failures while another writer is committing
-    conn.busy_timeout(std::time::Duration::from_secs(5))?;
+    // busy_timeout avoids immediate failures while another writer is committing
+    conn.busy_timeout(std::time::Duration::from_secs(5))
+        .context("failed to set busy_timeout on sqlite connection")?;
 
-    // Call your init_db (schema + pragmas). Make sure that function is in scope.
-    init_db(&conn)?; // ensure this function is defined in the same module
+    // Initialize schema and pragmas
+    init_db(&conn).context("failed to initialize database schema")?;
 
     Ok(conn)
 }
@@ -118,17 +120,20 @@ pub fn open_or_create_connection() -> Result<Connection> {
 /// Initialize the database connection: pragmas and schema
 pub fn init_db(conn: &Connection) -> Result<()> {
     // Enable foreign keys and WAL journal mode for better concurrency / durability
-    conn.pragma_update(None, "foreign_keys", &"ON")?;
-    // Set WAL; ignore errors if the underlying SQLite build doesn't support it.
+    conn.pragma_update(None, "foreign_keys", &"ON")
+        .context("failed to enable foreign_keys")?;
+    // Set WAL; ignore error if unsupported but surface other errors
     let _ = conn.pragma_update(None, "journal_mode", &"WAL");
 
-    conn.execute_batch(SCHEMA)?;
+    conn.execute_batch(SCHEMA)
+        .context("failed to execute schema SQL")?;
 
     // Ensure a single user_profile row
     conn.execute(
         "INSERT OR IGNORE INTO user_profile (id, currency) VALUES (1, 0);",
         [],
-    )?;
+    )
+    .context("failed to ensure user_profile row")?;
 
     Ok(())
 }
@@ -146,19 +151,22 @@ pub fn create_deck(
     conn.execute(
         "INSERT INTO decks (name, description, created_at, updated_at, source_path, source_hash) VALUES (?1, ?2, ?3, ?3, ?4, ?5)",
         params![name, description, now, source_path, source_hash],
-    )?;
+    )
+    .context("failed to insert deck")?;
     let deck_id = conn.last_insert_rowid();
 
     conn.execute(
         "INSERT INTO deck_stats (deck_id) VALUES (?1)",
         params![deck_id],
-    )?;
+    )
+    .context("failed to insert deck_stats row")?;
     Ok(deck_id)
 }
 
 /// Delete a deck (cascade deletes cards, card_stats, deck_stats)
 pub fn delete_deck(conn: &Connection, deck_id: i64) -> Result<()> {
-    conn.execute("DELETE FROM decks WHERE id = ?1", params![deck_id])?;
+    conn.execute("DELETE FROM decks WHERE id = ?1", params![deck_id])
+        .context("failed to delete deck")?;
     Ok(())
 }
 
@@ -169,39 +177,44 @@ pub fn add_card(conn: &Connection, deck_id: i64, term: &str, definition: &str) -
     conn.execute(
         "INSERT INTO cards (deck_id, term, definition, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)",
         params![deck_id, term, definition, now],
-    )?;
+    )
+    .context("failed to insert card")?;
     let card_id = conn.last_insert_rowid();
 
     conn.execute(
         "INSERT INTO card_stats (card_id) VALUES (?1)",
         params![card_id],
-    )?;
+    )
+    .context("failed to insert card_stats row")?;
     Ok(card_id)
 }
 
 /// Remove a card (cascade deletes card_stats)
 pub fn remove_card(conn: &Connection, card_id: i64) -> Result<()> {
-    conn.execute("DELETE FROM cards WHERE id = ?1", params![card_id])?;
+    conn.execute("DELETE FROM cards WHERE id = ?1", params![card_id])
+        .context("failed to delete card")?;
     Ok(())
 }
 
 /// Get all cards for a deck
 pub fn get_cards_for_deck(conn: &Connection, deck_id: i64) -> Result<Vec<Card>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, deck_id, term, definition FROM cards WHERE deck_id = ?1 ORDER BY id",
-    )?;
-    let rows = stmt.query_map(params![deck_id], |r| {
-        Ok(Card {
-            id: r.get(0)?,
-            deck_id: r.get(1)?,
-            term: r.get(2)?,
-            definition: r.get(3)?,
+    let mut stmt = conn
+        .prepare("SELECT id, deck_id, term, definition FROM cards WHERE deck_id = ?1 ORDER BY id")
+        .context("failed to prepare get_cards_for_deck statement")?;
+    let rows = stmt
+        .query_map(params![deck_id], |r| {
+            Ok(Card {
+                id: r.get(0)?,
+                deck_id: r.get(1)?,
+                term: r.get(2)?,
+                definition: r.get(3)?,
+            })
         })
-    })?;
+        .context("failed to query_map cards for deck")?;
 
     let mut out = Vec::new();
     for row in rows {
-        out.push(row?);
+        out.push(row.context("failed to map row into Card")?);
     }
     Ok(out)
 }
@@ -213,7 +226,7 @@ pub fn record_answer_immediate(conn: &Connection, card_id: i64, correct: bool) -
     let (score_delta, correct_delta, incorrect_delta) =
         if correct { (3, 1, 0) } else { (-1, 0, 1) };
 
-    let tx = conn.transaction()?;
+    let tx = conn.transaction().context("failed to start transaction")?;
 
     tx.execute(
         "UPDATE card_stats
@@ -223,13 +236,16 @@ pub fn record_answer_immediate(conn: &Connection, card_id: i64, correct: bool) -
              last_answered_at = ?4
          WHERE card_id = ?5",
         params![score_delta, correct_delta, incorrect_delta, now, card_id],
-    )?;
+    )
+    .context("failed to update card_stats")?;
 
-    let deck_id: i64 = tx.query_row(
-        "SELECT deck_id FROM cards WHERE id = ?1",
-        params![card_id],
-        |r| r.get(0),
-    )?;
+    let deck_id: i64 = tx
+        .query_row(
+            "SELECT deck_id FROM cards WHERE id = ?1",
+            params![card_id],
+            |r| r.get(0),
+        )
+        .context("failed to lookup deck_id for card")?;
 
     tx.execute(
         "UPDATE deck_stats
@@ -238,9 +254,10 @@ pub fn record_answer_immediate(conn: &Connection, card_id: i64, correct: bool) -
              last_studied_at = ?2
          WHERE deck_id = ?3",
         params![if correct { 1 } else { 0 }, now, deck_id],
-    )?;
+    )
+    .context("failed to update deck_stats")?;
 
-    tx.commit()?;
+    tx.commit().context("failed to commit transaction")?;
     Ok(())
 }
 
@@ -255,7 +272,7 @@ pub fn commit_session_batch(conn: &Connection, updates: &[(i64, i64, i64)]) -> R
     }
 
     let now = now_secs();
-    let tx = conn.transaction()?;
+    let tx = conn.transaction().context("failed to start transaction")?;
 
     let mut deck_deltas: HashMap<i64, (i64, i64)> = HashMap::new(); // deck_id -> (questions_total_delta, questions_correct_delta)
 
@@ -269,13 +286,16 @@ pub fn commit_session_batch(conn: &Connection, updates: &[(i64, i64, i64)]) -> R
                  last_answered_at = ?4
              WHERE card_id = ?5",
             params![score_delta, corrects, incorrects, now, card_id],
-        )?;
+        )
+        .with_context(|| format!("failed to update card_stats for card_id {}", card_id))?;
 
-        let deck_id: i64 = tx.query_row(
-            "SELECT deck_id FROM cards WHERE id = ?1",
-            params![card_id],
-            |r| r.get(0),
-        )?;
+        let deck_id: i64 = tx
+            .query_row(
+                "SELECT deck_id FROM cards WHERE id = ?1",
+                params![card_id],
+                |r| r.get(0),
+            )
+            .with_context(|| format!("failed to lookup deck_id for card_id {}", card_id))?;
 
         let entry = deck_deltas.entry(deck_id).or_insert((0, 0));
         entry.0 += (corrects + incorrects);
@@ -290,59 +310,68 @@ pub fn commit_session_batch(conn: &Connection, updates: &[(i64, i64, i64)]) -> R
                  last_studied_at = ?3
              WHERE deck_id = ?4",
             params![q_delta, correct_delta, now, deck_id],
-        )?;
+        )
+        .with_context(|| format!("failed to update deck_stats for deck_id {}", deck_id))?;
     }
 
-    tx.commit()?;
+    tx.commit().context("failed to commit batch transaction")?;
     Ok(())
 }
 
 /// Get cards in the positive learning set for a deck (learning_score > 0)
 pub fn get_positive_cards(conn: &Connection, deck_id: i64) -> Result<Vec<Card>> {
-    let mut stmt = conn.prepare(
-        "SELECT c.id, c.deck_id, c.term, c.definition
+    let mut stmt = conn
+        .prepare(
+            "SELECT c.id, c.deck_id, c.term, c.definition
          FROM cards c
          JOIN card_stats s ON c.id = s.card_id
          WHERE c.deck_id = ?1 AND s.learning_score > 0
          ORDER BY s.learning_score DESC",
-    )?;
-    let rows = stmt.query_map(params![deck_id], |r| {
-        Ok(Card {
-            id: r.get(0)?,
-            deck_id: r.get(1)?,
-            term: r.get(2)?,
-            definition: r.get(3)?,
+        )
+        .context("failed to prepare get_positive_cards statement")?;
+    let rows = stmt
+        .query_map(params![deck_id], |r| {
+            Ok(Card {
+                id: r.get(0)?,
+                deck_id: r.get(1)?,
+                term: r.get(2)?,
+                definition: r.get(3)?,
+            })
         })
-    })?;
+        .context("failed to query_map positive cards")?;
 
     let mut out = Vec::new();
     for r in rows {
-        out.push(r?);
+        out.push(r.context("failed to map positive card row")?);
     }
     Ok(out)
 }
 
 /// Get cards in the negative learning set for a deck (learning_score < 0)
 pub fn get_negative_cards(conn: &Connection, deck_id: i64) -> Result<Vec<Card>> {
-    let mut stmt = conn.prepare(
-        "SELECT c.id, c.deck_id, c.term, c.definition
+    let mut stmt = conn
+        .prepare(
+            "SELECT c.id, c.deck_id, c.term, c.definition
          FROM cards c
          JOIN card_stats s ON c.id = s.card_id
          WHERE c.deck_id = ?1 AND s.learning_score < 0
          ORDER BY s.learning_score ASC",
-    )?;
-    let rows = stmt.query_map(params![deck_id], |r| {
-        Ok(Card {
-            id: r.get(0)?,
-            deck_id: r.get(1)?,
-            term: r.get(2)?,
-            definition: r.get(3)?,
+        )
+        .context("failed to prepare get_negative_cards statement")?;
+    let rows = stmt
+        .query_map(params![deck_id], |r| {
+            Ok(Card {
+                id: r.get(0)?,
+                deck_id: r.get(1)?,
+                term: r.get(2)?,
+                definition: r.get(3)?,
+            })
         })
-    })?;
+        .context("failed to query_map negative cards")?;
 
     let mut out = Vec::new();
     for r in rows {
-        out.push(r?);
+        out.push(r.context("failed to map negative card row")?);
     }
     Ok(out)
 }
@@ -352,7 +381,8 @@ pub fn update_currency(conn: &Connection, delta: i64) -> Result<()> {
     conn.execute(
         "UPDATE user_profile SET currency = currency + ?1, updated_at = ?2 WHERE id = 1",
         params![delta, now_secs()],
-    )?;
+    )
+    .context("failed to update currency")?;
     Ok(())
 }
 
@@ -361,4 +391,5 @@ pub fn get_currency(conn: &Connection) -> Result<i64> {
     conn.query_row("SELECT currency FROM user_profile WHERE id = 1", [], |r| {
         r.get(0)
     })
+    .context("failed to query user currency")
 }
