@@ -393,3 +393,84 @@ pub fn get_currency(conn: &Connection) -> Result<i64> {
     })
     .context("failed to query user currency")
 }
+
+// Example: Storage wrapper API (place alongside your existing free functions)
+pub struct Storage {
+    pub conn: rusqlite::Connection,
+}
+
+impl Storage {
+    /// Open a connection and initialize DB
+    pub fn open_default() -> anyhow::Result<Self> {
+        let conn = open_or_create_connection()?; // uses function already in your file
+        Ok(Self { conn })
+    }
+
+    pub fn create_deck_from_local_deck(
+        &mut self,
+        deck: crate::core::deck::Deck,
+        source_path: Option<&str>,
+        source_hash: Option<&str>,
+    ) -> anyhow::Result<i64> {
+        // create deck row
+        let deck_id = create_deck(
+            &self.conn,
+            &deck.name,
+            deck.id.map(|_| None).flatten(),
+            source_path,
+            source_hash,
+        )?;
+        // insert cards (use a transaction for speed)
+        let tx = self.conn.transaction()?;
+        for c in deck.cards {
+            add_card(&tx, deck_id, &c.term, &c.definition)?; // you'd need add_card to accept &Transaction or create a thin wrapper
+        }
+        tx.commit()?;
+        Ok(deck_id)
+    }
+
+    pub fn get_deck_by_name(&self, name: &str) -> anyhow::Result<crate::core::deck::Deck> {
+        // example: look up deck id by name, then load cards
+        let deck_id: i64 = self
+            .conn
+            .query_row("SELECT id FROM decks WHERE name = ?1", [name], |r| r.get(0))
+            .context("deck not found")?;
+        self.get_deck_by_id(deck_id)
+    }
+
+    pub fn get_deck_by_id(&self, deck_id: i64) -> anyhow::Result<crate::core::deck::Deck> {
+        // load deck metadata
+        let name: String = self.conn.query_row(
+            "SELECT name FROM decks WHERE id = ?1",
+            params![deck_id],
+            |r| r.get(0),
+        )?;
+        // load cards
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, term, definition FROM cards WHERE deck_id = ?1 ORDER BY id")?;
+        let rows = stmt.query_map(params![deck_id], |r| {
+            Ok(crate::core::deck::Card {
+                // convert DB card id into Deck.card-only type or extend Card with id field
+                term: r.get(1)?,
+                definition: r.get(2)?,
+            })
+        })?;
+        let mut cards = Vec::new();
+        for row in rows {
+            cards.push(row?);
+        }
+        Ok(crate::core::deck::Deck {
+            name,
+            cards,
+            id: Some(deck_id as usize),
+        }) // see note about using i64
+    }
+
+    // Expose minimal persistence operations you need in main:
+    // - list decks
+    // - delete deck (by id or name)
+    // - add/remove card
+    // - record_answer_immediate / commit_session_batch
+    // - get_positive/negative cards
+}
