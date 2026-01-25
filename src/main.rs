@@ -2,11 +2,12 @@ use clap::{Parser, Subcommand, command};
 use std::path::PathBuf;
 mod core;
 mod ui;
-use quizzy::core::deck::{Deck, DeckSource, get_deck, resolve_deck_source};
-use quizzy::core::import::import_from_quizlet;
-use quizzy::core::string_distance::string_distance;
-use quizzy::ui::cards::cards_mode;
-use quizzy::ui::learn::learn_mode;
+use crate::core::deck::{Deck, DeckSource, read_deck_from_file, resolve_deck_source};
+use crate::core::import::import_from_quizlet;
+use crate::core::storage::Storage;
+use crate::core::string_distance::string_distance;
+use crate::ui::cards::cards_mode;
+use crate::ui::learn::learn_mode;
 
 #[derive(Parser)]
 #[command(name = "quizzy")]
@@ -17,7 +18,7 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Command {
-    Test {
+    Compare {
         s1: String,
         s2: String,
     },
@@ -80,12 +81,23 @@ pub enum Command {
     Delete {
         deck: String,
     },
+    Stats {
+        deck: String,
+    },
+}
+
+fn get_deck(src: DeckSource, str: &Storage) -> anyhow::Result<Deck> {
+    match src {
+        DeckSource::Named(_n) => storage.get_deck_by_name(&n),
+        DeckSource::File(p) => read_deck_from_file(p),
+    }
 }
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    let mut storage = Storage::open_default()?;
     return match cli.command {
-        Command::Test { s1, s2 } => {
+        Command::Compare { s1, s2 } => {
             println!("String Distance: {}", string_distance(s1, s2));
             Ok(())
         }
@@ -93,14 +105,16 @@ fn main() -> anyhow::Result<()> {
             println!("creating deck by name: {}", name);
             let deck = match file {
                 Some(p) => {
-                    let mut d = get_deck(DeckSource::File(p))?;
+                    let mut d = read_deck_from_file(p)?;
                     d.name = name.to_string();
                     d
                 }
                 None => Deck::named(name),
             };
             println!("Saving deck {}", deck.name); // double check name just in case
-            anyhow::bail!("Storage not yet implemented");
+            let deck_id = storage.create_deck_from_core(deck, None, None)?;
+            println!("Successfully saved deck. ({})", deck_id);
+            Ok(())
         }
         Command::Import { name, url_or_json } => import_from_quizlet(name, url_or_json),
         Command::Add {
@@ -108,20 +122,60 @@ fn main() -> anyhow::Result<()> {
             term,
             definition,
         } => {
-            println!(
-                "Adding term ({}) and definition ({}) to deck {}",
-                term, definition, deck
-            );
+            // make sure user isn't trying to add to a file-based deck
+            match resolve_deck_source(deck.as_str()) {
+                DeckSource::Named(name) => {
+                    let d = storage.get_deck_by_name(&name)?;
+                    if let Some(deck_id) = d.id {
+                        storage.add_card_to_deck(deck_id, &term, &definition)?;
+                        println!("Added card to deck '{}'", name);
+                    } else {
+                        anyhow::bail!("Missing deck id from storage?")
+                    }
+                }
+                DeckSource::File(_) => {
+                    println!("To add to a file-backed deck, create or find a saved deck first.");
+                }
+            }
             Ok(())
         }
         Command::Remove { deck, term } => {
-            println!("Removing term ({}) from deck {}", term, deck);
+            println!(
+                "Removing the first matching term ({}) from deck {}",
+                term, deck
+            );
+            match resolve_deck_source(deck.as_str()) {
+                DeckSource::Named(name) => {
+                    let d = storage.get_deck_by_name(&name)?;
+                    if d.id.is_none() {
+                        anyhow::bail!("Deck isn't persisted?");
+                    }
+                    // find card id
+                    if let Some((card_id, _, _)) = d
+                        .cards
+                        .iter()
+                        .filter(|c| c.term == term) // does the card need to be cloned here?
+                        .map(|c| (c.id, c.term.clone(), c.definition.clone())) // could &str be used?
+                        .find(|(id, _, _)| id.is_some())
+                    {
+                        storage.remove_card(card_id.unwrap())?;
+                        println!("Removed card '{}' from deck '{}'", term, name);
+                    } else {
+                        println!("No matching card '{}' found in deck '{}'", term, name);
+                    }
+                }
+                DeckSource::File(_) => {
+                    println!(
+                        "Cannot remove from file-backed deck. Create or save a deck from it first."
+                    );
+                }
+            }
             Ok(())
         }
         Command::List { deck } => match deck {
             Some(name) => {
                 println!("Listing out cards in deck: {}", name);
-                let deck = get_deck(resolve_deck_source(name.as_str()))?;
+                let deck = get_deck(resolve_deck_source(name.as_str()), storage);
                 for c in deck.cards {
                     println!("{} -> {}", c.term, c.definition)
                 }
@@ -129,6 +183,9 @@ fn main() -> anyhow::Result<()> {
             }
             None => {
                 println!("Listing out saved decks:");
+                for (id, name) in storage.list_decks()? {
+                    println!("({})\t{}", id, name);
+                }
                 Ok(())
             }
         },
@@ -141,25 +198,42 @@ fn main() -> anyhow::Result<()> {
             multiplechoice,
             questions,
         } => learn_mode(
-            get_deck(resolve_deck_source(deck.as_str()))?,
+            get_deck(resolve_deck_source(deck.as_str()), storage)?,
             nostats,
             terms,
             definitions,
             written,
             multiplechoice,
             questions,
+            storage,
         ),
-        Command::Cards { deck, shuffle } => {
-            cards_mode(get_deck(resolve_deck_source(deck.as_str()))?, shuffle)
-        }
+        Command::Cards { deck, shuffle } => cards_mode(
+            get_deck(resolve_deck_source(deck.as_str()), storage)?,
+            shuffle,
+        ),
         Command::Delete { deck } => {
             println!(
                 "Are you sure you want to delete from database?\n(This means removing the saved deck by this name)"
             );
-            println!(
-                "Would you also like to delete all stats associated with this deck?\n(They can be preserved and then accessed by `quizzy stats {deck}`"
-            );
+            match resolve_deck_source(deck.as_str()) {
+                DeckSource::Named(name) => {
+                    storage.delete_deck_by_name(&name)?;
+                    println!("Deleted saved deck '{}'", name);
+                    println!(
+                        "Would you also like to delete all stats associated with this deck?\n(They can be preserved and then accessed by `quizzy stats {deck}`"
+                    );
+                    todo!();
+                }
+                DeckSource::File(_) => {
+                    println!(
+                        "Path specified; not deleting files. Use the deck name of a saved deck to delete from DB."
+                    );
+                }
+            }
             Ok(())
+        }
+        Command::Stats { deck } => {
+            todo!();
         }
     };
 }

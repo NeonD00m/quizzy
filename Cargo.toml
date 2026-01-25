@@ -23,3 +23,4 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] } # for old AP
 url = "2.5.7" # for reading URLs
 anyhow = "1.0.100" # convenient error stuff
 # thiserror = "2.0.17"
+dirs-next = "2.0" # for platform-specific directories

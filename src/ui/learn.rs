@@ -1,4 +1,5 @@
 use crate::core::deck::*;
+use crate::core::storage::Storage;
 use crate::core::string_distance::string_distance;
 use anyhow::Context;
 use core::f64;
@@ -144,6 +145,7 @@ pub fn learn_mode(
     written: bool,
     multiple_choice: bool,
     questions: u8,
+    storage: &mut Storage,
 ) -> anyhow::Result<()> {
     println!("For options like -q=10 to set the number of questions, use `quizzy help learn`");
     // use a "bucket" of cards from the deck and refill bucket to get enough questions

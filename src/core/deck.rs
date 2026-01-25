@@ -1,4 +1,4 @@
-use crate::core::deck::DeckSource::*;
+use anyhow::Context;
 use serde::Deserialize;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -7,6 +7,7 @@ use std::vec::Vec;
 
 #[derive(Clone)]
 pub struct Card {
+    pub id: Option<i64>, // the database id when persisted
     pub term: String,
     pub definition: String,
 }
@@ -14,6 +15,15 @@ pub struct Card {
 impl Card {
     pub fn new(t: &str, d: &str) -> Self {
         Self {
+            id: None,
+            term: t.to_string(),
+            definition: d.to_string(),
+        }
+    }
+
+    pub fn load(t: &str, d: &str, id: i64) -> Self {
+        Self {
+            id: Some(id),
             term: t.to_string(),
             definition: d.to_string(),
         }
@@ -24,7 +34,7 @@ pub struct Deck {
     pub name: String,
     // personal statistics? probably in storage separately
     pub cards: Vec<Card>,
-    pub id: Option<usize>,
+    pub id: Option<i64>,
 }
 
 impl Deck {
@@ -41,6 +51,14 @@ impl Deck {
             name: String::from("Unnamed Deck"),
             cards,
             id: None,
+        }
+    }
+
+    pub fn load(name: String, cards: Vec<Card>, id: i64) -> Self {
+        Self {
+            name,
+            cards,
+            id: Some(id),
         }
     }
 }
@@ -150,7 +168,7 @@ fn read_deck_json(path: PathBuf) -> anyhow::Result<Deck> {
     ))
 }
 
-fn detect_read(path: PathBuf) -> anyhow::Result<Deck> {
+pub fn read_deck_from_file(path: PathBuf) -> anyhow::Result<Deck> {
     let ext = path
         .extension()
         .and_then(|x| x.to_str())
@@ -171,9 +189,16 @@ fn detect_read(path: PathBuf) -> anyhow::Result<Deck> {
     }
 }
 
-pub fn get_deck(src: DeckSource) -> anyhow::Result<Deck> {
-    match src {
-        Named(_n) => Ok(example_deck()),
-        File(p) => detect_read(p),
-    }
-}
+// still debating if I just make this use the storage or what???
+// fn get_deck(src: DeckSource) -> anyhow::Result<Deck> {
+//     match src {
+//         DeckSource::Named(_n) => {
+//             // this was initially temporary but now it might be cleaner to keep storage outside of here?
+//             println!(
+//                 "Warning: Tried to obtain named deck without storage, returning example deck."
+//             );
+//             Ok(example_deck())
+//         }
+//         DeckSource::File(p) => read_deck_from_file(p),
+//     }
+// }

@@ -1,3 +1,4 @@
+use crate::storage::storage::Storage;
 use crate::{core::deck::*, ui::cards::cards_mode};
 use anyhow::{Context, anyhow};
 use serde::Deserialize;
@@ -132,7 +133,11 @@ fn ask_for_json(url: String) -> anyhow::Result<String> {
     )
 }
 
-pub fn import_from_quizlet(name: Option<String>, url: Option<String>) -> anyhow::Result<()> {
+pub fn import_from_quizlet(
+    name: Option<String>,
+    url: Option<String>,
+    storage: &mut Storage,
+) -> anyhow::Result<()> {
     println!(
         "Quizzy currently only has the ability to import from Quizlet, let me know via github to create other options!"
     );
@@ -175,8 +180,7 @@ pub fn import_from_quizlet(name: Option<String>, url: Option<String>) -> anyhow:
     let mut deck = Deck::from_cards(cards);
     deck.name = name;
 
-    println!(
-        "Since storage hasn't been implemented yet, you can just study with flashcards for now."
-    );
-    cards_mode(deck, false)
+    storage.create_deck_from_core(deck, None, None)?;
+    println!("Deck successfully saved to registry.");
+    Ok(())
 }
