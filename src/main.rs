@@ -4,10 +4,13 @@ mod core;
 mod ui;
 use crate::core::deck::{Deck, DeckSource, read_deck_from_file, resolve_deck_source};
 use crate::core::import::import_from_quizlet;
-use crate::core::storage::Storage;
+use crate::core::learn::commit_session_with_retries;
+use crate::core::storage::{Storage, get_deck};
 use crate::core::string_distance::string_distance;
 use crate::ui::cards::cards_mode;
 use crate::ui::learn::learn_mode;
+use chrono::Utc;
+use std::io::{Write, stdin, stdout};
 
 #[derive(Parser)]
 #[command(name = "quizzy")]
@@ -86,16 +89,81 @@ pub enum Command {
     },
 }
 
-fn get_deck(src: DeckSource, str: &Storage) -> anyhow::Result<Deck> {
-    match src {
-        DeckSource::Named(_n) => storage.get_deck_by_name(&n),
-        DeckSource::File(p) => read_deck_from_file(p),
+fn startup(storage: &mut Storage) -> anyhow::Result<()> {
+    // 1) Welcome back if user inactive for a while (7 days)
+    if let Ok(Some(last_active)) = storage.get_user_last_active() {
+        let now = Utc::now().timestamp();
+        let secs_since = now - last_active;
+        let seven_days = 7 * 24 * 60 * 60;
+        if secs_since >= seven_days {
+            println!(
+                "Welcome back! It's been {} days since you last used Quizzy.",
+                secs_since / 86400
+            );
+        }
     }
+
+    // 2) Look for unsaved session files
+    Ok(match storage.failed_session_files() {
+        Ok(files) if !files.is_empty() => {
+            println!("Unsaved session(s) found!");
+            for (i, p) in files.iter().enumerate() {
+                println!("  [{}] {}", i + 1, p.display());
+            }
+            print!("Would you like me to try saving them now? (y/N): ");
+            stdout().flush()?;
+            let mut choice = String::new();
+            stdin().read_line(&mut choice)?;
+            let choice = choice.trim().to_lowercase();
+            if choice == "y" || choice == "yes" {
+                for p in files {
+                    println!("Attempting to save {}", p.display());
+                    match storage.read_failed_session_file(&p) {
+                        Ok(updates) => {
+                            // commit_session_with_retries is in ui::learn and should be public
+                            match commit_session_with_retries(storage, &updates, 3) {
+                                Ok(()) => {
+                                    println!(
+                                        "Saved session {} successfully; removing file.",
+                                        p.display()
+                                    );
+                                    if let Err(e) = storage.remove_failed_session_file(&p) {
+                                        eprintln!(
+                                            "Warning: failed to remove {}: {}",
+                                            p.display(),
+                                            e
+                                        );
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!("Failed to save session {}: {}", p.display(), e);
+                                    eprintln!("File has been preserved; you can retry later.");
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to parse session file {}: {}", p.display(), e);
+                            eprintln!("Skipping this file. You can inspect or delete it manually.");
+                        }
+                    }
+                }
+            } else {
+                println!(
+                    "Okay — unsaved sessions will remain in the DB directory. You can replay them later."
+                );
+            }
+        }
+        Ok(_) => { /* no files found */ }
+        Err(e) => {
+            eprintln!("Warning: failed to enumerate unsaved session files: {}", e);
+        }
+    })
 }
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let mut storage = Storage::open_default()?;
+    startup(&mut storage)?;
     return match cli.command {
         Command::Compare { s1, s2 } => {
             println!("String Distance: {}", string_distance(s1, s2));
@@ -116,7 +184,9 @@ fn main() -> anyhow::Result<()> {
             println!("Successfully saved deck. ({})", deck_id);
             Ok(())
         }
-        Command::Import { name, url_or_json } => import_from_quizlet(name, url_or_json),
+        Command::Import { name, url_or_json } => {
+            import_from_quizlet(name, url_or_json, &mut storage)
+        }
         Command::Add {
             deck,
             term,
@@ -175,7 +245,7 @@ fn main() -> anyhow::Result<()> {
         Command::List { deck } => match deck {
             Some(name) => {
                 println!("Listing out cards in deck: {}", name);
-                let deck = get_deck(resolve_deck_source(name.as_str()), storage);
+                let deck = get_deck(resolve_deck_source(name.as_str()), &mut storage)?;
                 for c in deck.cards {
                     println!("{} -> {}", c.term, c.definition)
                 }
@@ -198,17 +268,17 @@ fn main() -> anyhow::Result<()> {
             multiplechoice,
             questions,
         } => learn_mode(
-            get_deck(resolve_deck_source(deck.as_str()), storage)?,
+            get_deck(resolve_deck_source(deck.as_str()), &storage)?,
             nostats,
             terms,
             definitions,
             written,
             multiplechoice,
             questions,
-            storage,
+            &mut storage,
         ),
         Command::Cards { deck, shuffle } => cards_mode(
-            get_deck(resolve_deck_source(deck.as_str()), storage)?,
+            get_deck(resolve_deck_source(deck.as_str()), &storage)?,
             shuffle,
         ),
         Command::Delete { deck } => {

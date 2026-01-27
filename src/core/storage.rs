@@ -1,11 +1,11 @@
-use crate::core::deck::{Card, Deck};
+use crate::core::deck::{Card, Deck, DeckSource, read_deck_from_file};
 use anyhow::{Context, Result};
 use chrono::Utc;
 use rusqlite::{Connection, OpenFlags, params};
 use std::collections::HashMap;
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Schema initialized by `init_db`
 const SCHEMA: &str = r#"
@@ -49,6 +49,13 @@ CREATE TABLE IF NOT EXISTS deck_stats (
     last_studied_at INTEGER
 );
 
+CREATE TABLE IF NOT EXISTS card_confusions (
+    card_id INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+    mistaken_card_id INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+    count INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (card_id, mistaken_card_id)
+);
+
 CREATE TABLE IF NOT EXISTS user_profile (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     currency INTEGER NOT NULL DEFAULT 0,
@@ -88,6 +95,99 @@ pub fn db_path_from_env_or_default() -> PathBuf {
 }
 
 impl Storage {
+    /// Return the `updated_at` timestamp from `user_profile` (if present)
+    pub fn get_user_last_active(&self) -> Result<Option<i64>> {
+        use rusqlite::OptionalExtension;
+        let val: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT updated_at FROM user_profile WHERE id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .optional()
+            .context("failed to query user_profile.updated_at")?;
+        Ok(val)
+    }
+
+    /// Find unsaved session files written by fallback logic.
+    /// They live next to the DB file and match `quizzy_failed_session_*.log`.
+    pub fn failed_session_files(&self) -> Result<Vec<std::path::PathBuf>> {
+        let mut dir = db_path_from_env_or_default();
+        // We want the directory containing the DB.
+        if let Some(parent) = dir.parent() {
+            dir = parent.to_path_buf();
+        } else {
+            dir = std::path::PathBuf::from(".");
+        }
+
+        let mut out = Vec::new();
+        for entry in
+            std::fs::read_dir(&dir).context("failed to read DB directory for failed sessions")?
+        {
+            let entry = entry.context("failed to read directory entry")?;
+            let p = entry.path();
+            if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
+                if name.starts_with("quizzy_failed_session_") && name.ends_with(".log") {
+                    out.push(p);
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Parse a failed session file created by `write_failed_session_file`.
+    /// Format expected: each line `card_id,corrects,incorrects`
+    pub fn read_failed_session_file(&self, path: &std::path::Path) -> Result<Vec<(i64, i64, i64)>> {
+        let s = std::fs::read_to_string(path)
+            .with_context(|| format!("failed to read failed session file {}", path.display()))?;
+        let mut out = Vec::new();
+        for (line_number, line) in s.lines().enumerate() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let parts: Vec<&str> = line.split(',').collect();
+            if parts.len() != 3 {
+                return Err(anyhow::anyhow!(
+                    "invalid format in {} at line {}",
+                    path.display(),
+                    line_number + 1
+                ));
+            }
+            let a: i64 = parts[0].trim().parse().with_context(|| {
+                format!(
+                    "invalid card_id in {} line {}",
+                    path.display(),
+                    line_number + 1
+                )
+            })?;
+            let b: i64 = parts[1].trim().parse().with_context(|| {
+                format!(
+                    "invalid corrects in {} line {}",
+                    path.display(),
+                    line_number + 1
+                )
+            })?;
+            let c: i64 = parts[2].trim().parse().with_context(|| {
+                format!(
+                    "invalid incorrects in {} line {}",
+                    path.display(),
+                    line_number + 1
+                )
+            })?;
+            out.push((a, b, c));
+        }
+        Ok(out)
+    }
+
+    /// Remove a failed session file after replay or if user discards it.
+    pub fn remove_failed_session_file(&self, path: &Path) -> Result<()> {
+        std::fs::remove_file(path)
+            .with_context(|| format!("failed to remove failed session file {}", path.display()))?;
+        Ok(())
+    }
+
     /// Open or create the DB at the canonical path and initialize schema.
     pub fn open_default() -> Result<Self> {
         let path = db_path_from_env_or_default();
@@ -343,7 +443,7 @@ impl Storage {
                 .with_context(|| format!("failed to lookup deck_id for card_id {}", card_id))?;
 
             let entry = deck_deltas.entry(deck_id).or_insert((0, 0));
-            entry.0 += (corrects + incorrects);
+            entry.0 += corrects + incorrects;
             entry.1 += *corrects;
         }
 
@@ -361,6 +461,53 @@ impl Storage {
 
         tx.commit().context("failed to commit batch transaction")?;
         Ok(())
+    }
+
+    /// Record that `mistaken_with` was chosen when asking about `card_id`.
+    /// This increments the confusion count for (card_id,mistaken_with).
+    pub fn record_confusion(&mut self, card_id: i64, mistaken_with: i64) -> Result<()> {
+        self.conn
+            .execute(
+                "INSERT INTO card_confusions (card_id, mistaken_card_id, count)
+                 VALUES (?1, ?2, 1)
+                 ON CONFLICT(card_id, mistaken_card_id) DO UPDATE SET count = count + 1",
+                params![card_id, mistaken_with],
+            )
+            .with_context(|| {
+                format!(
+                    "failed to insert/update confusion for card {} mistaken_with {}",
+                    card_id, mistaken_with
+                )
+            })?;
+        Ok(())
+    }
+
+    /// Return recorded confusions for a card: Vec<(mistaken_card_id, count)> ordered by count desc.
+    pub fn get_confusions(&self, card_id: i64) -> Result<Vec<(i64, i64)>> {
+        let mut stmt = self.conn.prepare(
+                "SELECT mistaken_card_id, count FROM card_confusions WHERE card_id = ?1 ORDER BY count DESC",
+            ).context("failed to prepare get_confusions")?;
+        let rows = stmt
+            .query_map(params![card_id], |r| Ok((r.get(0)?, r.get(1)?)))
+            .context("failed to query confusions")?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.context("failed to map confusion row")?);
+        }
+        Ok(out)
+    }
+
+    /// Get current learning_score for a card (reads card_stats.learning_score).
+    pub fn get_card_learning_score(&self, card_id: i64) -> Result<i64> {
+        let score: i64 = self
+            .conn
+            .query_row(
+                "SELECT learning_score FROM card_stats WHERE card_id = ?1",
+                params![card_id],
+                |r| r.get(0),
+            )
+            .context(format!("failed to get learning_score for card {}", card_id))?;
+        Ok(score)
     }
 
     /// Get cards in the positive learning set for a deck (learning_score > 0)
@@ -429,4 +576,11 @@ pub fn init_db(conn: &Connection) -> Result<()> {
     .context("failed to ensure user_profile row")?;
 
     Ok(())
+}
+
+pub fn get_deck(src: DeckSource, storage: &Storage) -> anyhow::Result<Deck> {
+    match src {
+        DeckSource::Named(n) => storage.get_deck_by_name(&n),
+        DeckSource::File(p) => read_deck_from_file(p),
+    }
 }
