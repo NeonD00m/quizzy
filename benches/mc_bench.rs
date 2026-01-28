@@ -1,3 +1,4 @@
+// run with `cargo bench -v` PLEASE REMEMBER
 use criterion::{Criterion, criterion_group, criterion_main};
 use quizzy::core::deck::Card;
 use quizzy::core::deck::read_deck_from_file;
@@ -18,7 +19,7 @@ fn generate_confusions(cards: &mut Vec<Card>, rng: &mut ThreadRng) -> Vec<(i64, 
 
     let mut conf_map: HashMap<i64, i64> = HashMap::new();
     let deck_len = cards.len();
-    let num_samples = min(100, deck_len / 3); // tune volume of confusions
+    let num_samples = 4; //min(100, deck_len / 10); // tune volume of confusions
     for _ in 0..num_samples {
         let idx = rng.gen_range(0..deck_len);
         let mistaken_id = cards[idx].id.unwrap();
@@ -115,5 +116,14 @@ fn bench_mc_single_card(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_mc_all_cards, bench_mc_single_card);
-criterion_main!(benches);
+criterion_group!(
+    benches_single,
+    bench_mc_single_card,
+    bench_mc_single_card_no_confusions
+);
+criterion_group!(
+    benches_all,
+    bench_mc_all_cards,
+    bench_mc_all_cards_no_confusions
+);
+criterion_main!(benches_single, benches_all);
