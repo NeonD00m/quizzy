@@ -5,7 +5,7 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::vec::Vec;
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Card {
     pub id: Option<i64>, // the database id when persisted
     pub term: String,
@@ -27,6 +27,11 @@ impl Card {
             term: t.to_string(),
             definition: d.to_string(),
         }
+    }
+
+    /// Explict semantic comparison of cards' contents, ignoring id
+    pub fn same(&self, other: &Card) -> bool {
+        self.term == other.term && self.definition == other.definition
     }
 }
 

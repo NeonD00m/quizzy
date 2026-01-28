@@ -104,7 +104,7 @@ fn startup(storage: &mut Storage) -> anyhow::Result<()> {
     }
 
     // 2) Look for unsaved session files
-    Ok(match storage.failed_session_files() {
+    match storage.failed_session_files() {
         Ok(files) if !files.is_empty() => {
             println!("Unsaved session(s) found!");
             for (i, p) in files.iter().enumerate() {
@@ -157,14 +157,15 @@ fn startup(storage: &mut Storage) -> anyhow::Result<()> {
         Err(e) => {
             eprintln!("Warning: failed to enumerate unsaved session files: {}", e);
         }
-    })
+    };
+    Ok(())
 }
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let mut storage = Storage::open_default()?;
     startup(&mut storage)?;
-    return match cli.command {
+    match cli.command {
         Command::Compare { s1, s2 } => {
             println!("String Distance: {}", string_distance(s1, s2));
             Ok(())
@@ -193,19 +194,19 @@ fn main() -> anyhow::Result<()> {
             definition,
         } => {
             // make sure user isn't trying to add to a file-based deck
-            match resolve_deck_source(deck.as_str()) {
-                DeckSource::Named(name) => {
-                    let d = storage.get_deck_by_name(&name)?;
-                    if let Some(deck_id) = d.id {
-                        storage.add_card_to_deck(deck_id, &term, &definition)?;
-                        println!("Added card to deck '{}'", name);
-                    } else {
-                        anyhow::bail!("Missing deck id from storage?")
-                    }
-                }
+            let deck = (match resolve_deck_source(deck.as_str()) {
+                DeckSource::Named(name) => Some(storage.get_deck_by_name(&name)?),
                 DeckSource::File(_) => {
                     println!("To add to a file-backed deck, create or find a saved deck first.");
+                    None
                 }
+            })
+            .ok_or(anyhow::anyhow!("Cannot add to a file-backed deck."))?;
+            if let Some(deck_id) = deck.id {
+                storage.add_card_to_deck(deck_id, &term, &definition)?;
+                println!("Added card to deck '{}'", deck.name);
+            } else {
+                anyhow::bail!("Missing deck id from storage?")
             }
             Ok(())
         }
@@ -214,38 +215,35 @@ fn main() -> anyhow::Result<()> {
                 "Removing the first matching term ({}) from deck {}",
                 term, deck
             );
-            match resolve_deck_source(deck.as_str()) {
-                DeckSource::Named(name) => {
-                    let d = storage.get_deck_by_name(&name)?;
-                    if d.id.is_none() {
-                        anyhow::bail!("Deck isn't persisted?");
-                    }
-                    // find card id
-                    if let Some((card_id, _, _)) = d
-                        .cards
-                        .iter()
-                        .filter(|c| c.term == term) // does the card need to be cloned here?
-                        .map(|c| (c.id, c.term.clone(), c.definition.clone())) // could &str be used?
-                        .find(|(id, _, _)| id.is_some())
-                    {
-                        storage.remove_card(card_id.unwrap())?;
-                        println!("Removed card '{}' from deck '{}'", term, name);
-                    } else {
-                        println!("No matching card '{}' found in deck '{}'", term, name);
-                    }
-                }
+            let deck = (match resolve_deck_source(deck.as_str()) {
+                DeckSource::Named(name) => Some(storage.get_deck_by_name(&name)?),
                 DeckSource::File(_) => {
                     println!(
                         "Cannot remove from file-backed deck. Create or save a deck from it first."
                     );
+                    None
                 }
+            })
+            .ok_or(anyhow::anyhow!("Cannot remove from file-backed deck."))?;
+            // find card id
+            if let Some((card_id, _, _)) = deck
+                .cards
+                .iter()
+                .filter(|c| c.term == term) // \/ does the card need to be cloned here?
+                .map(|c| (c.id, c.term.clone(), c.definition.clone())) // could &str be used?
+                .find(|(id, _, _)| id.is_some())
+            {
+                storage.remove_card(card_id.unwrap())?;
+                println!("Removed card '{}' from deck '{}'", term, deck.name);
+            } else {
+                println!("No matching card '{}' found in deck '{}'", term, deck.name);
             }
             Ok(())
         }
         Command::List { deck } => match deck {
             Some(name) => {
                 println!("Listing out cards in deck: {}", name);
-                let deck = get_deck(resolve_deck_source(name.as_str()), &mut storage)?;
+                let deck = get_deck(resolve_deck_source(name.as_str()), &storage)?;
                 for c in deck.cards {
                     println!("{} -> {}", c.term, c.definition)
                 }
@@ -305,5 +303,5 @@ fn main() -> anyhow::Result<()> {
         Command::Stats { deck } => {
             todo!();
         }
-    };
+    }
 }

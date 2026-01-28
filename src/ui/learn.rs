@@ -31,18 +31,18 @@ fn choice_input() -> anyhow::Result<KeyCode> {
             println!("Ignoring input due to mofidier {:}\r", event.modifiers);
             continue;
         }
-        if match event.code {
-            KeyCode::Esc => true,
-            KeyCode::Char('1') => true,
-            KeyCode::Char('2') => true,
-            KeyCode::Char('3') => true,
-            KeyCode::Char('4') => true,
-            _ => false,
-        } {
+        if matches!(
+            event.code,
+            KeyCode::Esc
+                | KeyCode::Char('1')
+                | KeyCode::Char('2')
+                | KeyCode::Char('3')
+                | KeyCode::Char('4')
+        ) {
             return Ok(event.code);
         }
     }
-    return Ok(KeyCode::Esc);
+    Ok(KeyCode::Esc)
 }
 
 /// Needs to be able to take in whatever context and card then update state like 'still_learning'
@@ -157,7 +157,7 @@ pub fn learn_mode(
     }
 
     fn refill_bucket(
-        cards: &Vec<Card>,
+        cards: &[Card],
         scores_by_card: &HashMap<i64, i64>,
         bucket: &mut Vec<usize>,
         rng: &mut ThreadRng,
@@ -251,7 +251,7 @@ pub fn learn_mode(
                 session_answered += 1;
                 answer(
                     &is_right,
-                    &c,
+                    c,
                     &mut session_correct,
                     &mut session_learned,
                     &mut session_still_learning,
@@ -259,14 +259,16 @@ pub fn learn_mode(
                 break;
             }
         } else {
-            // ask multiple choice
-            let random_cards = {
-                // We want the choices to be drawn from the full deck; use a local shuffled copy
-                let mut candidates = cards.clone();
-                candidates.shuffle(&mut rng);
-                candidates
-            };
-            let choices = get_multiple_choice_for_card(&c, &random_cards, &mut rng, ask_term);
+            // fetch recorded confusions for this card (if persisted)
+            let mut confusions_vec: Vec<(i64, i64)> = Vec::new();
+            if let Some(card_id) = c.id {
+                match storage.get_confusions(card_id) {
+                    Ok(v) => confusions_vec = v,
+                    Err(_) => { /* ignore DB read error; fallback to pure heuristic */ }
+                }
+            }
+            let choices =
+                get_multiple_choice_for_card(c, &cards, &mut rng, ask_term, Some(&confusions_vec));
             if ask_term {
                 println!(
                     "(1) {}\t\t\t(2) {}\n(3) {}\t\t\t(4) {}",
@@ -316,7 +318,7 @@ pub fn learn_mode(
             session_answered += 1;
             answer(
                 &is_right,
-                &c,
+                c,
                 &mut session_correct,
                 &mut session_learned,
                 &mut session_still_learning,

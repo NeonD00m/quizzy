@@ -7,6 +7,10 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+// make learnings core constants for correct and incorrect answers
+const CORRECT_ANSWER_SCORE: i64 = 3;
+const INCORRECT_ANSWER_SCORE: i64 = 1;
+
 /// Schema initialized by `init_db`
 const SCHEMA: &str = r#"
 PRAGMA foreign_keys = ON;
@@ -83,7 +87,7 @@ pub fn db_path_from_env_or_default() -> PathBuf {
     }
 
     let mut base = dirs_next::data_local_dir()
-        .or_else(|| dirs_next::data_dir())
+        .or_else(dirs_next::data_dir)
         .unwrap_or_else(|| {
             env::current_dir().expect("Unable to determine current directory for DB fallback")
         });
@@ -127,10 +131,11 @@ impl Storage {
         {
             let entry = entry.context("failed to read directory entry")?;
             let p = entry.path();
-            if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
-                if name.starts_with("quizzy_failed_session_") && name.ends_with(".log") {
-                    out.push(p);
-                }
+            if let Some(name) = p.file_name().and_then(|n| n.to_str())
+                && name.starts_with("quizzy_failed_session_")
+                && name.ends_with(".log")
+            {
+                out.push(p);
             }
         }
         Ok(out)
@@ -422,7 +427,7 @@ impl Storage {
         let mut deck_deltas: HashMap<i64, (i64, i64)> = HashMap::new(); // deck_id -> (questions_total_delta, questions_correct_delta)
 
         for (card_id, corrects, incorrects) in updates {
-            let score_delta = 3 * corrects - 1 * incorrects;
+            let score_delta = CORRECT_ANSWER_SCORE * corrects - INCORRECT_ANSWER_SCORE * incorrects;
             tx.execute(
                 "UPDATE card_stats
                  SET learning_score = learning_score + ?1,
@@ -469,8 +474,8 @@ impl Storage {
         self.conn
             .execute(
                 "INSERT INTO card_confusions (card_id, mistaken_card_id, count)
-                 VALUES (?1, ?2, 1)
-                 ON CONFLICT(card_id, mistaken_card_id) DO UPDATE SET count = count + 1",
+                     VALUES (?1, ?2, 1)
+                     ON CONFLICT(card_id, mistaken_card_id) DO UPDATE SET count = count + 1",
                 params![card_id, mistaken_with],
             )
             .with_context(|| {
@@ -479,6 +484,45 @@ impl Storage {
                     card_id, mistaken_with
                 )
             })?;
+        Ok(())
+    }
+
+    /// Mark that a previous confusion for (card_id, mistaken_with) has been corrected.
+    /// If `new_score` > 0, set `count = new_score`. If `new_score` <= 0, remove the confusion row.
+    pub fn correct_confusion(
+        &mut self,
+        card_id: i64,
+        mistaken_with: i64,
+        new_score: i64,
+    ) -> Result<()> {
+        if new_score > 0 {
+            self.conn
+                .execute(
+                    "UPDATE card_confusions
+                 SET count = ?1
+                 WHERE card_id = ?2 AND mistaken_card_id = ?3",
+                    params![new_score, card_id, mistaken_with],
+                )
+                .with_context(|| {
+                    format!(
+                        "failed to update confusion for card {} mistaken_with {}",
+                        card_id, mistaken_with
+                    )
+                })?;
+        } else {
+            // remove the confusion entry entirely if the new score is non-positive
+            self.conn
+                .execute(
+                    "DELETE FROM card_confusions WHERE card_id = ?1 AND mistaken_card_id = ?2",
+                    params![card_id, mistaken_with],
+                )
+                .with_context(|| {
+                    format!(
+                        "failed to delete confusion for card {} mistaken_with {}",
+                        card_id, mistaken_with
+                    )
+                })?;
+        }
         Ok(())
     }
 
@@ -562,9 +606,9 @@ impl Storage {
 
 /// Initialize the database connection: pragmas and schema
 pub fn init_db(conn: &Connection) -> Result<()> {
-    conn.pragma_update(None, "foreign_keys", &"ON")
+    conn.pragma_update(None, "foreign_keys", "ON")
         .context("failed to enable foreign_keys")?;
-    let _ = conn.pragma_update(None, "journal_mode", &"WAL");
+    let _ = conn.pragma_update(None, "journal_mode", "WAL");
 
     conn.execute_batch(SCHEMA)
         .context("failed to execute schema SQL")?;

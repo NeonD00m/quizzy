@@ -129,18 +129,14 @@ fn cards_input() -> KeyCode {
             println!("Ignoring input due to mofidier {:}\r", event.modifiers);
             continue;
         }
-        if match event.code {
-            KeyCode::Esc => true,
-            KeyCode::Enter => true,
-            KeyCode::Char(' ') => true,
-            KeyCode::Left => true,
-            KeyCode::Right => true,
-            _ => false,
-        } {
+        if matches!(
+            event.code,
+            KeyCode::Esc | KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right
+        ) {
             return event.code;
         }
     }
-    return KeyCode::Esc;
+    KeyCode::Esc
 }
 
 pub fn cards_mode(deck: Deck, shuffle: bool) -> anyhow::Result<()> {
@@ -172,7 +168,7 @@ pub fn cards_mode(deck: Deck, shuffle: bool) -> anyhow::Result<()> {
         } else {
             println!("Definition  (space to flip, a for previous, d/enter for next)")
         }
-        display_card(&current, flipped);
+        display_card(current, flipped);
         match cards_input() {
             KeyCode::Char(' ') => {
                 flipped = !flipped;
@@ -205,5 +201,5 @@ pub fn cards_mode(deck: Deck, shuffle: bool) -> anyhow::Result<()> {
         }
     }
     disable_raw_mode()?;
-    return Ok(());
+    Ok(())
 }

@@ -30,9 +30,10 @@ pub fn learned_threshold(deck_size: usize) -> i64 {
 /// Returns a vector including the original card and 3 others, randomly sorted
 pub fn get_multiple_choice_for_card(
     c: &Card,
-    cards: &Vec<Card>,
+    cards: &[Card],
     rng: &mut ThreadRng,
     ask_term: bool,
+    confusions: Option<&Vec<(i64, i64)>>,
 ) -> Vec<Card> {
     let expected = if ask_term {
         c.definition.clone()
@@ -40,54 +41,103 @@ pub fn get_multiple_choice_for_card(
         c.term.clone()
     };
 
-    // build a list of candidate cards (exclude the card itself)
-    let mut candidates: Vec<(u8, Card)> = cards
-        .iter()
-        .filter(|other| other.term != c.term && other.definition != c.definition)
-        .map(|other| {
-            let candidate_str = if ask_term {
-                other.definition.clone()
-            } else {
-                other.term.clone()
-            };
-            let dist = string_distance(candidate_str, expected.clone());
-            (dist, other.clone())
-        })
-        .collect();
+    // weighted sample without replacement from Vec<(weight, Card)>
+    fn weighted_sample_no_replacement(
+        mut items: Vec<(i64, Card)>,
+        k: usize,
+        rng: &mut ThreadRng,
+    ) -> Vec<Card> {
+        let mut out = Vec::new();
+        if items.is_empty() || k == 0 {
+            return out;
+        }
+        // make sure no negative weights
+        for it in items.iter_mut() {
+            if it.0 < 0 {
+                it.0 = 0;
+            }
+        }
 
-    // sort ascending by distance (most similar first)
-    candidates.sort_by_key(|(dist, _)| *dist);
+        while out.len() < k && !items.is_empty() {
+            let total: i64 = items.iter().map(|(w, _)| *w).sum();
+            if total <= 0 {
+                break;
+            }
+            let pick = rng.gen_range(0..total);
+            let mut idx = 0usize;
+            let mut acc = 0i64;
+            for (i, (w, _)) in items.iter().enumerate() {
+                acc += *w;
+                if pick < acc {
+                    idx = i;
+                    break;
+                }
+            }
+            let chosen = items.remove(idx).1;
+            out.push(chosen);
+        }
+        out
+    }
 
-    // TODO: do non-deterministicly weighted by similarity
-    let mut choices: Vec<Card> = candidates
-        .into_iter()
-        .take(3)
-        .map(|(_, card)| card)
-        .collect();
-
-    // if fewer than 3 similar choices found, fill randomly
-    if choices.len() < 3 {
-        let mut additional: Vec<Card> = cards
+    // use confusion-based candiates (if provided)
+    let mut chosen: Vec<Card> = Vec::new();
+    if let Some(confusion_vec) = confusions {
+        // map confusion entries to cards
+        let mut confusion_candidates: Vec<(i64, Card)> = Vec::new();
+        for (mistaken_id, count) in confusion_vec.iter() {
+            if let Some(card) = cards.iter().find(|oc| oc.id == Some(*mistaken_id)) {
+                if card == c {
+                    continue; // important sanity check lol
+                }
+                // cap the confusion count to 20 to not over-value a single card
+                confusion_candidates.push((min(*count, 20), card.clone()));
+            }
+        }
+        let mut confusions_chosen = weighted_sample_no_replacement(confusion_candidates, 3, rng);
+        // append any unique cards
+        for chosen_card in confusions_chosen.drain(..) {
+            if chosen_card != *c && !chosen.contains(&chosen_card) {
+                chosen.push(chosen_card);
+            }
+        }
+    }
+    // if not enough confusions, use string distance
+    if chosen.len() < 3 {
+        let mut candidates: Vec<(u8, Card)> = cards
             .iter()
-            .filter(|other| other.term != c.term || other.definition != c.definition)
-            .filter(|other| {
-                !choices
-                    .iter()
-                    .any(|ch| ch.term == other.term && ch.definition == other.definition)
+            .filter(|other| *other != c)
+            .map(|other| {
+                let candidate_str = if ask_term {
+                    other.definition.clone()
+                } else {
+                    other.term.clone()
+                };
+                let dist = string_distance(candidate_str, expected.clone());
+                (dist, other.clone())
             })
-            .cloned()
             .collect();
-        additional.shuffle(rng);
-        for card in additional.into_iter().take(3 - choices.len()) {
-            choices.push(card);
+
+        // sort ascending by distance (most similar first)
+        candidates.sort_by_key(|(dist, _)| *dist);
+
+        for (_distance, card) in candidates.into_iter().take(3 - chosen.len()) {
+            if !chosen.contains(&card) {
+                chosen.push(card);
+            }
         }
     }
 
-    // add the correct card and shuffle
-    choices.push(c.clone());
-    choices.shuffle(rng);
+    // *sighs* if we still don't have 3 cards, put placeholders
+    for i in 0..((3_usize).saturating_sub(chosen.len())) {
+        let str = format!("[No option {}]", i);
+        chosen.push(Card::new(str.as_str(), str.as_str()));
+    }
 
-    choices
+    // add the correct card and shuffle
+    chosen.push(c.clone());
+    chosen.shuffle(rng);
+
+    chosen
 }
 
 /// Try to commit session updates with retries and backoff.

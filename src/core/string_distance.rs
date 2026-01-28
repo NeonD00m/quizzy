@@ -24,14 +24,15 @@ pub fn string_distance(given: String, expected: String) -> u8 {
     let mut v0: Vec<usize> = (0..=n).collect();
     let mut v1: Vec<usize> = vec![0usize; n + 1];
 
-    for i in 0..m {
+    // for i in 0..m {
+    for (i, character) in s.iter().enumerate() {
         // if edit distance is deleting chars to match empty t
         v1[0] = i + 1;
 
         for j in 0..n {
             let deletion_cost = v0[j + 1].saturating_add(1);
             let insertion_cost = v1[j].saturating_add(1);
-            let substitution_cost = v0[j].saturating_add(if s[i] == t[j] { 0 } else { 1 });
+            let substitution_cost = v0[j].saturating_add(if *character == t[j] { 0 } else { 1 });
             v1[j + 1] = min(min(deletion_cost, insertion_cost), substitution_cost);
         }
 

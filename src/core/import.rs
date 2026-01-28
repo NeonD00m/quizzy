@@ -59,7 +59,7 @@ fn extract_set_id(parsed: Url) -> Option<String> {
 fn extract_cards(json_deck: ApiResponse) -> anyhow::Result<Vec<Card>> {
     let response = json_deck
         .responses
-        .get(0)
+        .first()
         .context("No responses found in JSON.")?;
 
     let studiable = &response.models.studiableItem;
@@ -68,7 +68,7 @@ fn extract_cards(json_deck: ApiResponse) -> anyhow::Result<Vec<Card>> {
     for (idx, item) in studiable.iter().enumerate() {
         let front_side = item
             .cardSides
-            .get(0)
+            .first()
             .ok_or_else(|| anyhow!("Card {} is missing a front side", idx))?;
         let back_side = item
             .cardSides
