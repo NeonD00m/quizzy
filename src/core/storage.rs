@@ -1,6 +1,7 @@
 use crate::core::deck::{Card, Deck, DeckSource, read_deck_from_file};
 use anyhow::{Context, Result};
 use chrono::Utc;
+use rusqlite::OptionalExtension;
 use rusqlite::{Connection, OpenFlags, params};
 use std::collections::HashMap;
 use std::env;
@@ -368,7 +369,7 @@ impl Storage {
 
     /// Immediate update for a single answer (durable).
     /// correct: true => +3 learning_score and +1 correct_count; false => -1 learning_score and +1 incorrect_count
-    pub fn record_answer_immediate(&mut self, card_id: i64, correct: bool) -> Result<()> {
+    pub fn _record_answer_immediate(&mut self, card_id: i64, correct: bool) -> Result<()> {
         let now = now_secs();
         let (score_delta, correct_delta, incorrect_delta) =
             if correct { (3, 1, 0) } else { (-1, 0, 1) };
@@ -468,61 +469,71 @@ impl Storage {
         Ok(())
     }
 
-    /// Record that `mistaken_with` was chosen when asking about `card_id`.
-    /// This increments the confusion count for (card_id,mistaken_with).
-    pub fn record_confusion(&mut self, card_id: i64, mistaken_with: i64) -> Result<()> {
-        self.conn
-            .execute(
-                "INSERT INTO card_confusions (card_id, mistaken_card_id, count)
-                     VALUES (?1, ?2, 1)
-                     ON CONFLICT(card_id, mistaken_card_id) DO UPDATE SET count = count + 1",
-                params![card_id, mistaken_with],
-            )
-            .with_context(|| {
-                format!(
-                    "failed to insert/update confusion for card {} mistaken_with {}",
-                    card_id, mistaken_with
-                )
-            })?;
-        Ok(())
-    }
+    /// Update a confusion count for (card_id, mistaken_with) by adding delta.
+    /// If new score <= 0, remove the confusion row.
+    ///
+    /// Behavior:
+    ///  - If a row exists: new_count = old_count + delta.
+    ///      - If new_count > 0 => UPDATE count = new_count
+    ///      - If new_count <= 0 => DELETE row
+    ///  - If no row exists and delta > 0 => INSERT new row with count = delta
+    pub fn adjust_confusion(&mut self, card_id: i64, mistaken_with: i64, delta: i64) -> Result<()> {
+        let tx = self
+            .conn
+            .transaction()
+            .context("failed to start transaction for adjust_confusion")?;
 
-    /// Mark that a previous confusion for (card_id, mistaken_with) has been corrected.
-    /// If `new_score` > 0, set `count = new_score`. If `new_score` <= 0, remove the confusion row.
-    pub fn correct_confusion(
-        &mut self,
-        card_id: i64,
-        mistaken_with: i64,
-        new_score: i64,
-    ) -> Result<()> {
-        if new_score > 0 {
-            self.conn
-                .execute(
-                    "UPDATE card_confusions
-                 SET count = ?1
-                 WHERE card_id = ?2 AND mistaken_card_id = ?3",
-                    params![new_score, card_id, mistaken_with],
-                )
-                .with_context(|| {
-                    format!(
-                        "failed to update confusion for card {} mistaken_with {}",
-                        card_id, mistaken_with
+        // Try to read existing count
+        let existing: Option<i64> = tx
+            .query_row(
+                "SELECT count FROM card_confusions WHERE card_id = ?1 AND mistaken_card_id = ?2",
+                params![card_id, mistaken_with],
+                |r| r.get(0),
+            )
+            .optional()
+            .context("failed to query existing confusion")?;
+
+        match existing {
+            Some(old) => {
+                let new = old + delta;
+                if new > 0 {
+                    tx.execute(
+                        "UPDATE card_confusions SET count = ?1 WHERE card_id = ?2 AND mistaken_card_id = ?3",
+                        params![new, card_id, mistaken_with],
                     )
-                })?;
-        } else {
-            // remove the confusion entry entirely if the new score is non-positive
-            self.conn
-                .execute(
-                    "DELETE FROM card_confusions WHERE card_id = ?1 AND mistaken_card_id = ?2",
-                    params![card_id, mistaken_with],
-                )
-                .with_context(|| {
-                    format!(
-                        "failed to delete confusion for card {} mistaken_with {}",
-                        card_id, mistaken_with
+                    .with_context(|| format!("failed to update confusion for card {} mistaken_with {}", card_id, mistaken_with))?;
+                } else {
+                    tx.execute(
+                        "DELETE FROM card_confusions WHERE card_id = ?1 AND mistaken_card_id = ?2",
+                        params![card_id, mistaken_with],
                     )
-                })?;
+                    .with_context(|| {
+                        format!(
+                            "failed to delete confusion for card {} mistaken_with {}",
+                            card_id, mistaken_with
+                        )
+                    })?;
+                }
+            }
+            None => {
+                if delta > 0 {
+                    // Insert a new row with count = delta
+                    tx.execute(
+                        "INSERT INTO card_confusions (card_id, mistaken_card_id, count) VALUES (?1, ?2, ?3)",
+                        params![card_id, mistaken_with, delta],
+                    )
+                    .with_context(|| {
+                        format!(
+                            "failed to insert confusion for card {} mistaken_with {}",
+                            card_id, mistaken_with
+                        )
+                    })?;
+                }
+            }
         }
+
+        tx.commit()
+            .context("failed to commit adjust_confusion transaction")?;
         Ok(())
     }
 
@@ -555,7 +566,7 @@ impl Storage {
     }
 
     /// Get cards in the positive learning set for a deck (learning_score > 0)
-    pub fn get_positive_cards(&self, deck_id: i64) -> Result<Vec<Card>> {
+    pub fn _get_positive_cards(&self, deck_id: i64) -> Result<Vec<Card>> {
         let mut stmt = self
             .conn
             .prepare(
@@ -584,7 +595,7 @@ impl Storage {
     }
 
     /// Update persistent currency in user_profile (positive or negative delta)
-    pub fn update_currency(&mut self, delta: i64) -> Result<()> {
+    pub fn _update_currency(&mut self, delta: i64) -> Result<()> {
         self.conn
             .execute(
                 "UPDATE user_profile SET currency = currency + ?1, updated_at = ?2 WHERE id = 1",
@@ -595,7 +606,7 @@ impl Storage {
     }
 
     /// Read current currency
-    pub fn get_currency(&self) -> Result<i64> {
+    pub fn _get_currency(&self) -> Result<i64> {
         self.conn
             .query_row("SELECT currency FROM user_profile WHERE id = 1", [], |r| {
                 r.get(0)

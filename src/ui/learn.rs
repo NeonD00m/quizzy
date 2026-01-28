@@ -235,13 +235,13 @@ pub fn learn_mode(
                 if response == "quit" {
                     break 'questions;
                 }
-                // TODO: check if typed answer is close enough
                 let expected = if ask_term {
                     c.definition.clone()
                 } else {
                     c.term.clone()
                 };
-                let is_right = (expected.len() as f64 * 0.3f64)
+                // check if typed answer is close enough
+                let is_right = (expected.len() as f64 * 0.3_f64)
                     > (string_distance(response.to_string(), expected.clone()) as f64);
                 if is_right {
                     println!("✓: {}\n", expected);
@@ -338,7 +338,14 @@ pub fn learn_mode(
 
             // record confusion immediate just to make it easy
             if !is_right && let (Some(correct_id), Some(mistaken_id)) = (c.id, chosen.id) {
-                let _ = storage.record_confusion(correct_id, mistaken_id);
+                let _ = storage.adjust_confusion(correct_id, mistaken_id, 1);
+            } else if is_right && let Some(correct_id) = c.id {
+                for mistaken in choices.iter().filter(|x| x != c) {
+                    if let Some(mistaken_id) = mistaken.id {
+                        // ignore errors since this is not fatal (nothing to cry abou)
+                        let _ = storage.adjust_confusion(correct_id, mistaken_id, -1);
+                    }
+                }
             }
         }
     }

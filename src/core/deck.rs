@@ -21,18 +21,10 @@ impl Card {
         }
     }
 
-    pub fn load(t: &str, d: &str, id: i64) -> Self {
-        Self {
-            id: Some(id),
-            term: t.to_string(),
-            definition: d.to_string(),
-        }
-    }
-
-    /// Explict semantic comparison of cards' contents, ignoring id
-    pub fn same(&self, other: &Card) -> bool {
-        self.term == other.term && self.definition == other.definition
-    }
+    // Explict semantic comparison of cards' contents, ignoring id
+    // pub fn same(&self, other: &Card) -> bool {
+    //     self.term == other.term && self.definition == other.definition
+    // }
 }
 
 pub struct Deck {
@@ -58,29 +50,22 @@ impl Deck {
             id: None,
         }
     }
-
-    pub fn load(name: String, cards: Vec<Card>, id: i64) -> Self {
-        Self {
-            name,
-            cards,
-            id: Some(id),
-        }
-    }
 }
 
-pub fn example_deck() -> Deck {
-    Deck {
-        name: "EXAMPLE".to_string(),
-        cards: vec![
-            Card::new("hola", "hello"),
-            Card::new("la cama", "the bed"),
-            Card::new("la puerta", "the door"),
-            Card::new("el reloj", "the watch"),
-            Card::new("el libro", "the book"),
-        ],
-        id: None,
-    }
-}
+// todo: maybe implement a tutorial deck?
+// pub fn example_deck() -> Deck {
+//     Deck {
+//         name: "EXAMPLE".to_string(),
+//         cards: vec![
+//             Card::new("hola", "hello"),
+//             Card::new("la cama", "the bed"),
+//             Card::new("la puerta", "the door"),
+//             Card::new("el reloj", "the watch"),
+//             Card::new("el libro", "the book"),
+//         ],
+//         id: None,
+//     }
+// }
 
 pub enum DeckSource {
     Named(String),
@@ -198,7 +183,6 @@ pub fn read_deck_from_file(path: PathBuf) -> anyhow::Result<Deck> {
 // fn get_deck(src: DeckSource) -> anyhow::Result<Deck> {
 //     match src {
 //         DeckSource::Named(_n) => {
-//             // this was initially temporary but now it might be cleaner to keep storage outside of here?
 //             println!(
 //                 "Warning: Tried to obtain named deck without storage, returning example deck."
 //             );

@@ -301,7 +301,7 @@ fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Command::Stats { deck } => {
-            todo!();
+            todo!("stats for deck {}", deck);
         }
     }
 }

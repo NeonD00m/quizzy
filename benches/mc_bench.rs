@@ -6,7 +6,6 @@ use quizzy::core::learn::get_multiple_choice_for_card;
 use rand::Rng;
 use rand::rngs::ThreadRng;
 use rand::{prelude::SliceRandom, thread_rng};
-use std::cmp::min;
 use std::collections::HashMap;
 use std::hint::black_box;
 use std::path::PathBuf;
@@ -19,7 +18,7 @@ fn generate_confusions(cards: &mut Vec<Card>, rng: &mut ThreadRng) -> Vec<(i64, 
 
     let mut conf_map: HashMap<i64, i64> = HashMap::new();
     let deck_len = cards.len();
-    let num_samples = 4; //min(100, deck_len / 10); // tune volume of confusions
+    let num_samples = 4; //std::cmp::min(100, deck_len / 10); // tune volume of confusions
     for _ in 0..num_samples {
         let idx = rng.gen_range(0..deck_len);
         let mistaken_id = cards[idx].id.unwrap();
