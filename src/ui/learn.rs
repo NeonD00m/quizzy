@@ -188,7 +188,9 @@ pub fn learn_mode(
     );
 
     'questions: for i in 1..=questions {
-        if bucket.len() < 1 + (deck_size as f64 * 0.25_f64) as usize {
+        if bucket.is_empty()
+            || (deck_size > 10 && bucket.len() < 1 + (deck_size as f64 * 0.25_f64) as usize)
+        {
             refill_bucket(&cards, &scores_by_card, &mut bucket, &mut rng, threshold);
         }
         let index = bucket.pop().context("Bucket unexpected empty.")?;
@@ -284,6 +286,9 @@ pub fn learn_mode(
                 );
             }
             print!("Type 1-4 or press Esc to exit: ");
+            stdout()
+                .flush()
+                .context("Failed to flush output before choice input.")?;
             let n = match choice_input()? {
                 KeyCode::Char('1') => 0,
                 KeyCode::Char('2') => 1,
