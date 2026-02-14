@@ -1,9 +1,7 @@
-use crate::core::deck::*;
+use crate::ui::input::cards_input;
+use crate::{core::deck::*, ui::input::RawModeGuard};
 use anyhow::Context;
-use crossterm::{
-    event::{KeyCode, KeyModifiers, read},
-    terminal::{disable_raw_mode, enable_raw_mode, size},
-};
+use crossterm::{event::KeyCode, terminal::size};
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use std::cmp::max;
@@ -115,30 +113,6 @@ fn display_card(c: &Card, flipped: bool) {
     println!("╰{:─^len$}╯", "", len = len);
 }
 
-fn cards_input() -> KeyCode {
-    while let Ok(event) = read() {
-        let Some(event) = event.as_key_press_event() else {
-            continue;
-        };
-        if event.modifiers == KeyModifiers::CONTROL
-            && (event.code == KeyCode::Char('c') || event.code == KeyCode::Char('d'))
-        {
-            return KeyCode::Esc;
-        }
-        if event.modifiers != KeyModifiers::NONE {
-            println!("Ignoring input due to mofidier {:}\r", event.modifiers);
-            continue;
-        }
-        if matches!(
-            event.code,
-            KeyCode::Esc | KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right
-        ) {
-            return event.code;
-        }
-    }
-    KeyCode::Esc
-}
-
 pub fn cards_mode(deck: Deck, shuffle: bool) -> anyhow::Result<()> {
     println!("To see options like -s for shuffling, use `quizzy help cards`");
     let mut flipped = false;
@@ -155,7 +129,7 @@ pub fn cards_mode(deck: Deck, shuffle: bool) -> anyhow::Result<()> {
         cards.shuffle(&mut rng);
     }
 
-    enable_raw_mode()?;
+    let _guard = RawModeGuard::new();
     loop {
         let option = cards.get(index);
         if option.is_none() {
@@ -200,6 +174,5 @@ pub fn cards_mode(deck: Deck, shuffle: bool) -> anyhow::Result<()> {
             index = 0;
         }
     }
-    disable_raw_mode()?;
     Ok(())
 }

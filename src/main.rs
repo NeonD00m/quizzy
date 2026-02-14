@@ -8,6 +8,7 @@ use crate::core::learn::commit_session_with_retries;
 use crate::core::storage::{Storage, get_deck};
 use crate::core::string_distance::string_distance;
 use crate::ui::cards::cards_mode;
+use crate::ui::gamble::gauntlet_mode;
 use crate::ui::learn::learn_mode;
 use chrono::Utc;
 use std::io::{Write, stdin, stdout};
@@ -80,6 +81,12 @@ pub enum Command {
         /// Shuffle cards before studying
         #[arg(short, long)]
         shuffle: bool,
+    },
+    Gauntlet {
+        deck: String,
+    },
+    Gamble {
+        deck: String,
     },
     Delete {
         deck: String,
@@ -278,6 +285,14 @@ fn main() -> anyhow::Result<()> {
         Command::Cards { deck, shuffle } => cards_mode(
             get_deck(resolve_deck_source(deck.as_str()), &storage)?,
             shuffle,
+        ),
+        Command::Gamble { deck } => gauntlet_mode(
+            get_deck(resolve_deck_source(deck.as_str()), &storage)?,
+            &mut storage,
+        ),
+        Command::Gauntlet { deck } => gauntlet_mode(
+            get_deck(resolve_deck_source(deck.as_str()), &storage)?,
+            &mut storage,
         ),
         Command::Delete { deck } => {
             println!(

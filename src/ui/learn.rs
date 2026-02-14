@@ -2,48 +2,17 @@ use crate::core::deck::*;
 use crate::core::learn::*;
 use crate::core::storage::Storage;
 use crate::core::string_distance::string_distance;
+use crate::ui::input::type_input;
+use crate::ui::input::{choice_input, enter_input};
 use anyhow::Context;
 use core::f64;
-use crossterm::{
-    event::{KeyCode, KeyModifiers, read},
-    terminal::{disable_raw_mode, enable_raw_mode},
-};
+use crossterm::event::KeyCode;
 use rand::rngs::ThreadRng;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use std::collections::{HashMap, HashSet};
 use std::io::Write as IoWrite;
-use std::io::{stdin, stdout};
-
-/// ALWAYS DISABLE RAW MODE AFTER
-fn choice_input() -> anyhow::Result<KeyCode> {
-    enable_raw_mode()?;
-    while let Ok(event) = read() {
-        let Some(event) = event.as_key_press_event() else {
-            continue;
-        };
-        if event.modifiers == KeyModifiers::CONTROL
-            && (event.code == KeyCode::Char('c') || event.code == KeyCode::Char('d'))
-        {
-            return Ok(KeyCode::Esc);
-        }
-        if event.modifiers != KeyModifiers::NONE {
-            println!("Ignoring input due to mofidier {:}\r", event.modifiers);
-            continue;
-        }
-        if matches!(
-            event.code,
-            KeyCode::Esc
-                | KeyCode::Char('1')
-                | KeyCode::Char('2')
-                | KeyCode::Char('3')
-                | KeyCode::Char('4')
-        ) {
-            return Ok(event.code);
-        }
-    }
-    Ok(KeyCode::Esc)
-}
+use std::io::stdout;
 
 /// Needs to be able to take in whatever context and card then update state like 'still_learning'
 fn answer(
@@ -121,7 +90,7 @@ pub fn learn_mode(
     let mut session_answered: usize = 0;
     let mut session_learned: HashSet<String> = HashSet::new();
     let mut session_still_learning: HashSet<String> = HashSet::new();
-    let mut input = String::new();
+    // let mut input = String::new();
     let mut rng = thread_rng();
 
     // map accumulated session delta for batch update
@@ -182,11 +151,17 @@ pub fn learn_mode(
             "\nUsing a file-backed deck means stats won't be persisted. If you'd like to keep track of your progress and have more adaptive learning, use `quizzy new <name> <file>` and then `quizzy learn <name>`."
         )
     }
-    println!(
-        "\nBeginning lesson: {}. Press Escape at any time to end the session.",
+
+    print!(
+        "Press [ENTER] to begin lesson on {} or [ESC] at any time to end the session. >",
         deck.name
     );
-
+    stdout().flush().context("Failed to flush output.")?;
+    if enter_input()? == KeyCode::Esc {
+        println!("Cancelled Lesson.");
+        return Ok(());
+    }
+    println!();
     'questions: for i in 1..=questions {
         if bucket.is_empty()
             || (deck_size > 10 && bucket.len() < 1 + (deck_size as f64 * 0.25_f64) as usize)
@@ -219,47 +194,54 @@ pub fn learn_mode(
         };
 
         if ask_term {
-            println!("Term: {}\t\t\t({i}/{questions})", c.term);
+            println!("\nTerm: {}\t\t\t({i}/{questions})", c.term);
         } else {
-            println!("Definition: {}\t\t\t({i}/{questions})", c.definition);
+            println!("\nDefinition: {}\t\t\t({i}/{questions})", c.definition);
         }
         if ask_written {
-            print!("Type the answer or 'quit': ");
-            stdout().flush().context("Failed to flush output.")?;
-            loop {
-                input.clear();
-                if stdin().read_line(&mut input).is_err() {
-                    println!("Error reading input, try again.");
-                    input.clear();
-                    continue;
-                }
-                let response = input.trim();
-                if response == "quit" {
-                    break 'questions;
-                }
-                let expected = if ask_term {
-                    c.definition.clone()
-                } else {
-                    c.term.clone()
-                };
-                // check if typed answer is close enough
-                let is_right = (expected.len() as f64 * 0.3_f64)
-                    > (string_distance(response.to_string(), expected.clone()) as f64);
-                if is_right {
-                    println!("✓: {}\n", expected);
-                } else {
-                    println!("X: {}\t\t\t✓: {}\n", response, expected);
-                }
-                session_answered += 1;
-                answer(
-                    &is_right,
-                    c,
-                    &mut session_correct,
-                    &mut session_learned,
-                    &mut session_still_learning,
-                );
-                break;
+            // TODO: rewrite to use raw mode with input buffer
+            let response = if let Some(str) = type_input("Type the answer of [ESC] ")? {
+                str
+            } else {
+                println!("\n");
+                break 'questions;
+            };
+            // print!("Type the answer or 'quit' > ");
+            // stdout().flush().context("Failed to flush output.")?;
+            // loop {
+            //     input.clear();
+            //     if stdin().read_line(&mut input).is_err() {
+            //         println!("Error reading input, try again.");
+            //         input.clear();
+            //         continue;
+            //     }
+            //     let response = input.trim();
+            //     if response == "quit" {
+            //         break 'questions;
+            //     }
+            let expected = if ask_term {
+                c.definition.clone()
+            } else {
+                c.term.clone()
+            };
+            // check if typed answer is close enough
+            let is_right = (expected.len() as f64 * 0.3_f64)
+                > (string_distance(response.to_string(), expected.clone()) as f64);
+            if is_right {
+                println!("\n\n✓: {}\n", expected);
+            } else {
+                println!("\n\nX: {}\t\t\t✓: {}\n", response, expected);
             }
+            session_answered += 1;
+            answer(
+                &is_right,
+                c,
+                &mut session_correct,
+                &mut session_learned,
+                &mut session_still_learning,
+            );
+            //     break;
+            // }
         } else {
             // fetch recorded confusions for this card (if persisted)
             let mut confusions_vec: Vec<(i64, i64)> = Vec::new();
@@ -285,21 +267,23 @@ pub fn learn_mode(
                     choices[0].term, choices[1].term, choices[2].term, choices[3].term,
                 );
             }
-            print!("Type 1-4 or press Esc to exit: ");
+            print!("Enter 1-4 > ");
             stdout()
                 .flush()
                 .context("Failed to flush output before choice input.")?;
-            let n = match choice_input()? {
+            let n: usize = match choice_input()? {
                 KeyCode::Char('1') => 0,
                 KeyCode::Char('2') => 1,
                 KeyCode::Char('3') => 2,
                 KeyCode::Char('4') => 3,
                 _ => {
-                    disable_raw_mode()?;
+                    println!();
+                    // stdout()
+                    //     .flush()
+                    //     .context("Failed to flush output before choice input.")?;
                     break 'questions;
                 }
             };
-            disable_raw_mode()?;
             if choices.get(n).is_none() {
                 continue;
             }
@@ -365,7 +349,7 @@ pub fn learn_mode(
 
         // try to commit with retries for "wtf" errors
         match commit_session_with_retries(storage, &updates_vec, 3) {
-            Ok(()) => println!("Session stats saved."),
+            Ok(()) => println!("\nSession stats saved."),
             Err(e) => {
                 eprintln!("Failed to persist session stats after retries: {}", e);
                 // try to write fallback file so data is not lost
@@ -377,14 +361,14 @@ pub fn learn_mode(
         }
     }
 
-    println!("Continue to view results:");
-    input.clear();
-    if let Err(e) = stdin().read_line(&mut input) {
-        println!("Error reading line but continuing anyways: {}", e);
+    print!("Press [ENTER] to view results or [ESC] to skip > ");
+    stdout().flush().context("Failed to flush output.")?;
+    if enter_input()? == KeyCode::Esc {
+        return Ok(());
     }
 
     println!(
-        "Questions Answered Correctly: {}/{}",
+        "\n\nQuestions Answered Correctly: {}/{}",
         session_correct, session_answered
     );
     println!(
