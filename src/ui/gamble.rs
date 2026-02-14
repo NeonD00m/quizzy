@@ -1,89 +1,13 @@
-use crate::core::deck::*;
 use crate::core::learn::get_multiple_choice_for_card;
+use crate::core::{deck::*, storage::Storage};
+use crate::ui::input::{RoundAction, enter_input, read_input_with_fuse};
 use anyhow::Context;
-use crossterm::{
-    ExecutableCommand, QueueableCommand, cursor,
-    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, read},
-    style::{Color, Print, SetForegroundColor},
-    terminal::{Clear, ClearType, size},
-};
+use crossterm::{event::KeyCode, terminal::size};
 use rand::seq::SliceRandom;
 use rand::{rngs::ThreadRng, thread_rng};
 use std::cmp::max;
 use std::io::{Write, stdout};
 use std::time::{Duration, Instant};
-
-enum GameResult {
-    Answer(usize), // Returns index 1-4
-    Bank,
-    Double,
-    Exit,
-    Timeout,
-}
-
-// This function handles the "High Pressure" input
-fn read_input_with_timer(time_limit: Duration) -> std::io::Result<GameResult> {
-    let start = Instant::now();
-    let mut stdout = stdout();
-
-    // How wide is the timer bar?
-    let bar_width = 30;
-
-    loop {
-        let elapsed = start.elapsed();
-        if elapsed >= time_limit {
-            return Ok(GameResult::Timeout);
-        }
-
-        // 1. CALCULATE PROGRESS
-        let remaining = time_limit - elapsed;
-        let percent_left = remaining.as_secs_f32() / time_limit.as_secs_f32();
-        let fill_count = (percent_left * bar_width as f32).ceil() as usize;
-
-        // 2. RENDER TIMER BAR (Using Carriage Return \r to overwrite line)
-        // We use ANSI colors to make it look urgent (Red if low, Green if high)
-        let color = if percent_left < 0.3 {
-            Color::Red
-        } else {
-            Color::Green
-        };
-
-        let bar_str = format!(
-            "[{}{}] {:.1}s",
-            "#".repeat(fill_count),
-            "-".repeat(bar_width - fill_count),
-            remaining.as_secs_f32()
-        );
-
-        stdout
-            .queue(cursor::MoveToColumn(0))?
-            .queue(Clear(ClearType::CurrentLine))?
-            .queue(Print("Time: "))?
-            .queue(SetForegroundColor(color))?
-            .queue(Print(bar_str))?
-            .queue(SetForegroundColor(Color::Reset))?
-            .flush()?;
-
-        // 3. POLL FOR INPUT (Non-blocking check)
-        // We wait up to 50ms for an event. If no event, we loop back to update timer.
-        if event::poll(Duration::from_millis(50))? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
-                    match key.code {
-                        KeyCode::Char('1') => return Ok(GameResult::Answer(1)),
-                        KeyCode::Char('2') => return Ok(GameResult::Answer(2)),
-                        KeyCode::Char('3') => return Ok(GameResult::Answer(3)),
-                        KeyCode::Char('4') => return Ok(GameResult::Answer(4)),
-                        KeyCode::Char('b') | KeyCode::Char('B') => return Ok(GameResult::Bank),
-                        KeyCode::Char('d') | KeyCode::Char('D') => return Ok(GameResult::Double),
-                        KeyCode::Esc => return Ok(GameResult::Exit),
-                        _ => {} // Ignore other keys
-                    }
-                }
-            }
-        }
-    }
-}
 
 fn wrap_text(s: &str, max_width: usize) -> Vec<String> {
     if max_width == 0 {
@@ -192,36 +116,16 @@ fn display_card(c: &Card, flipped: bool) {
     println!("╰{:─^len$}╯", "", len = len);
 }
 
-fn cards_input() -> KeyCode {
-    while let Ok(event) = read() {
-        let Some(event) = event.as_key_press_event() else {
-            continue;
-        };
-        if event.modifiers == KeyModifiers::CONTROL
-            && (event.code == KeyCode::Char('c') || event.code == KeyCode::Char('d'))
-        {
-            return KeyCode::Esc;
-        }
-        if event.modifiers != KeyModifiers::NONE {
-            println!("Ignoring input due to mofidier {:}\r", event.modifiers);
-            continue;
-        }
-        if matches!(
-            event.code,
-            KeyCode::Esc | KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right
-        ) {
-            return event.code;
-        }
-    }
-    KeyCode::Esc
+fn gauntlet_reward(consecutive: i64) -> i64 {
+    (consecutive * 50) + 100
 }
 
-pub fn gauntlet_mode(deck: &Deck, bank: i64) -> anyhow::Result<()> {
+pub fn gauntlet_mode(deck: Deck, storage: &mut Storage) -> anyhow::Result<()> {
     let mut current_streak = 0;
     let mut rng = thread_rng();
     let cards = deck.cards;
-    let deck_size = cards.len();
     let mut bucket: Vec<usize> = Vec::new();
+    let mut balance = storage.get_currency()?;
 
     // refill bucket by cloning cards and shuffling
     fn refill_bucket(cards: &[Card], bucket: &mut Vec<usize>, rng: &mut ThreadRng) {
@@ -232,85 +136,110 @@ pub fn gauntlet_mode(deck: &Deck, bank: i64) -> anyhow::Result<()> {
         bucket.shuffle(rng);
     }
 
-    loop {
+    'main: loop {
         // 1. Clear screen and show Header
         print!("\x1B[2J\x1B[1;1H"); // ANSI clear screen code
         println!("========================================");
         println!("           STUDY CASINO: OPEN           ");
         println!("========================================");
         println!("DECK: {}", deck.name);
-        println!("BANK: {}", bank);
+        println!("BANK: {}", balance);
         println!("STREAK: {}", current_streak);
         println!("----------------------------------------");
-
-        // 2. Get random card logic here...
-        if bucket.is_empty() {
-            refill_bucket(&cards, &mut bucket, &mut rng);
+        print!("Press [ENTER] to deal the first card or [ESC] to cancel > ");
+        stdout().flush().context("Failed to flush output.")?;
+        let prompt = enter_input();
+        if prompt? == KeyCode::Esc {
+            println!("Cancelled Gauntlet session.");
+            return Ok(());
         }
-        let index = bucket.pop().context("Bucket unexpected empty.")?;
-        let card = &cards.get(index).context("Expected card for index.")?;
-
-        // 3. Draw Card Front
-        display_card(&card, false);
-
-        // 4. Double Down Prompt (Standard blocking input)
-        print!("> Double down (2x risk/reward)? (y/n): ");
-        stdout().flush()?;
-        let mut double_input = String::new();
-        std::io::stdin().read_line(&mut double_input)?;
-        let is_doubled = double_input.trim().eq_ignore_ascii_case("y");
-
-        // 5. Display Options
-        println!("What's on the other side?");
-        let choices = get_multiple_choice_for_card(card, &cards, &mut rng, false, None);
-        println!(
-            "(1) {}\t\t\t(2) {}\n(3) {}\t\t\t(4) {}",
-            choices[0].definition,
-            choices[1].definition,
-            choices[2].definition,
-            choices[3].definition,
-        );
-
-        // 6. START THE TIMER LOOP
-        // Base time is 10s, minus 1s for every streak level (min 3s)
-        let time_allowed = Duration::from_secs(std::cmp::max(5, 20 - current_streak));
-
-        // Wait for result
-        let result = read_input_with_timer(time_allowed)?;
-
-        // 7. Handle Result
-        match result {
-            GameResult::Timeout => {
-                println!("\n\nBUST! You ran out of time.");
-                bank -= 100; // Penalty
-                current_streak = 0;
+        'streak: loop {
+            // 2. Get random card logic here...
+            if bucket.is_empty() {
+                refill_bucket(&cards, &mut bucket, &mut rng);
             }
-            GameResult::Answer(idx) => {
-                if idx == card.correct_index {
-                    println!("\n\n✓ Correct!");
-                    let reward = if is_doubled { 200 } else { 100 };
-                    bank += reward;
-                    current_streak += 1;
-                } else {
-                    println!("\n\nX Wrong! Answer was: {}", card.correct_answer);
-                    bank -= if is_doubled { 200 } else { 100 };
-                    current_streak = 0;
+            let index = bucket.pop().context("Bucket unexpected empty.")?;
+            let card = &cards.get(index).context("Expected card for index.")?;
+
+            // DISPLAY CARD AND OPTIONS
+            display_card(card, false);
+            let mut bet = gauntlet_reward(current_streak);
+            println!("What's on the other side?\t\tBet: ${}", bet);
+            let choices = get_multiple_choice_for_card(card, &cards, &mut rng, false, None);
+            println!(
+                "(1) {}\t\t\t(2) {}\n(3) {}\t\t\t(4) {}",
+                choices[0].definition,
+                choices[1].definition,
+                choices[2].definition,
+                choices[3].definition,
+            );
+
+            // START THE INPUT LOOP
+            let now = Instant::now();
+            let mut time_allowed = std::cmp::max(5, 15 - current_streak) as f64;
+            'input: loop {
+                let result = read_input_with_fuse(
+                    time_allowed as u64,
+                    "Enter 1-4, \"DOUBLE\", or \"BANK\" ",
+                )?;
+                match result {
+                    RoundAction::Timeout => {
+                        println!("\n\nBUST! You ran out of time.");
+                        balance -= bet; // Penalty
+                        storage._update_currency(-bet)?;
+                        current_streak = 0;
+                        break 'streak;
+                    }
+                    RoundAction::Answer(num_char) => {
+                        let idx = match num_char {
+                            '1' => 0,
+                            '2' => 1,
+                            '3' => 2,
+                            _ => 3,
+                        };
+                        if let Some(choice) = choices.get(idx)
+                            && choice == *card
+                        {
+                            println!("\n\n✓ Correct!");
+                            balance += bet;
+                            storage._update_currency(bet)?;
+                            current_streak += 1;
+                            break 'input;
+                        } else {
+                            println!("\n\nX Wrong! Answer was: {}", card.definition);
+                            balance -= bet;
+                            storage._update_currency(-bet)?;
+                            current_streak = 0;
+                            break 'streak;
+                        }
+                    }
+                    RoundAction::Bank => {
+                        println!("\n\n$$ Banked safely.");
+                        // don't subtract from balance
+                        break 'streak;
+                    }
+                    RoundAction::Double => {
+                        if balance < 2 * bet {
+                            println!("NOT ENOUGH BALANCE TO DOUBLE DOWN. RESUMING TIMER.");
+                            time_allowed -= now.elapsed().as_secs_f64();
+                            continue 'input;
+                        }
+                        // timer resets when you double, should I change that?
+                        bet *= 2;
+                        println!("DOUBLE DOWN ACTIVATED! RESET TIMER. Bet: ${}", bet);
+                        stdout().flush().context("Failed to flush output")?;
+                    }
+                    RoundAction::Exit => {
+                        println!("Quit game. Lost bet and streak of {}.", current_streak);
+                        storage._update_currency(-bet)?;
+                        break 'main;
+                    }
                 }
             }
-            GameResult::Bank => {
-                println!("\n\n$$ Banked safely.");
-                // TODO: immediately save currency
-            }
-            GameResult::Exit => break,
-            _ => {}
+            // 8. Pause before next round so they can see the result
+            std::thread::sleep(Duration::from_secs(2));
         }
-
-        // 8. Pause before next round so they can see the result
-        std::thread::sleep(Duration::from_secs(2));
+        println!("Session ended with {} successful answers!", current_streak);
     }
-    Ok(())
-}
-
-pub fn gamble_mode(deck: Deck, shuffle: bool) -> anyhow::Result<()> {
     Ok(())
 }

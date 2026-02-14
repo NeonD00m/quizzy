@@ -606,7 +606,7 @@ impl Storage {
     }
 
     /// Read current currency
-    pub fn _get_currency(&self) -> Result<i64> {
+    pub fn get_currency(&self) -> Result<i64> {
         self.conn
             .query_row("SELECT currency FROM user_profile WHERE id = 1", [], |r| {
                 r.get(0)
