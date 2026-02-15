@@ -73,6 +73,7 @@ fn initial_fill(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn learn_mode(
     deck: Deck,
     nostats: bool,

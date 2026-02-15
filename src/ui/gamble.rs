@@ -150,9 +150,10 @@ pub fn gauntlet_mode(deck: Deck, storage: &mut Storage) -> anyhow::Result<()> {
         stdout().flush().context("Failed to flush output.")?;
         let prompt = enter_input();
         if prompt? == KeyCode::Esc {
-            println!("Cancelled Gauntlet session.");
+            println!("\nEnded Gauntlet session.");
             return Ok(());
         }
+        println!();
         'streak: loop {
             // 2. Get random card logic here...
             if bucket.is_empty() {
@@ -162,6 +163,7 @@ pub fn gauntlet_mode(deck: Deck, storage: &mut Storage) -> anyhow::Result<()> {
             let card = &cards.get(index).context("Expected card for index.")?;
 
             // DISPLAY CARD AND OPTIONS
+            println!();
             display_card(card, false);
             let mut bet = gauntlet_reward(current_streak);
             println!("What's on the other side?\t\tBet: ${}", bet);
@@ -176,7 +178,7 @@ pub fn gauntlet_mode(deck: Deck, storage: &mut Storage) -> anyhow::Result<()> {
 
             // START THE INPUT LOOP
             let now = Instant::now();
-            let mut time_allowed = std::cmp::max(5, 15 - current_streak) as f64;
+            let mut time_allowed = std::cmp::max(10, 20 - current_streak) as f64;
             'input: loop {
                 let result = read_input_with_fuse(
                     time_allowed as u64,
@@ -214,7 +216,7 @@ pub fn gauntlet_mode(deck: Deck, storage: &mut Storage) -> anyhow::Result<()> {
                         }
                     }
                     RoundAction::Bank => {
-                        println!("\n\n$$ Banked safely.");
+                        println!("\n\n$$$ Banked safely.");
                         // don't subtract from balance
                         break 'streak;
                     }
@@ -239,7 +241,12 @@ pub fn gauntlet_mode(deck: Deck, storage: &mut Storage) -> anyhow::Result<()> {
             // 8. Pause before next round so they can see the result
             std::thread::sleep(Duration::from_secs(2));
         }
-        println!("Session ended with {} successful answers!", current_streak);
+        print!(
+            "Session ended with {} successful answers! > ",
+            current_streak
+        );
+        stdout().flush().context("Failed to flush output.")?;
+        enter_input()?;
     }
     Ok(())
 }

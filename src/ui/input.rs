@@ -120,6 +120,7 @@ pub fn read_input_with_fuse(allowed_seconds: u64, prefix: &str) -> anyhow::Resul
 
     let _guard = RawModeGuard::new();
     stdout.execute(cursor::Show)?;
+    println!(); // make space for fuse line
     loop {
         let elapsed = start_time.elapsed();
         if elapsed >= duration {
