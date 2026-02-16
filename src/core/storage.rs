@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS card_confusions (
 CREATE TABLE IF NOT EXISTS user_profile (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     currency INTEGER NOT NULL DEFAULT 0,
+    streak INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
     updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 );
@@ -595,7 +596,7 @@ impl Storage {
     }
 
     /// Update persistent currency in user_profile (positive or negative delta)
-    pub fn _update_currency(&mut self, delta: i64) -> Result<()> {
+    pub fn update_currency(&mut self, delta: i64) -> Result<()> {
         self.conn
             .execute(
                 "UPDATE user_profile SET currency = currency + ?1, updated_at = ?2 WHERE id = 1",
@@ -612,6 +613,26 @@ impl Storage {
                 r.get(0)
             })
             .context("failed to query user currency")
+    }
+
+    /// Update persistent gauntlet streak in user_profile (positive or negative delta)
+    pub fn update_streak(&mut self, delta: i64) -> Result<()> {
+        self.conn
+            .execute(
+                "UPDATE user_profile SET streak = streak + ?1, updated_at = ?2 WHERE id = 1",
+                params![delta, now_secs()],
+            )
+            .context("failed to update streak")?;
+        Ok(())
+    }
+
+    /// Read current streak
+    pub fn get_streak(&self) -> Result<i64> {
+        self.conn
+            .query_row("SELECT streak FROM user_profile WHERE id = 1", [], |r| {
+                r.get(0)
+            })
+            .context("failed to query user streak")
     }
 }
 

@@ -7,6 +7,7 @@ use rand::seq::SliceRandom;
 use rand::{rngs::ThreadRng, thread_rng};
 use std::cmp::max;
 use std::io::{Write, stdout};
+use std::thread::current;
 use std::time::{Duration, Instant};
 
 fn wrap_text(s: &str, max_width: usize) -> Vec<String> {
@@ -121,11 +122,11 @@ fn gauntlet_reward(consecutive: i64) -> i64 {
 }
 
 pub fn gauntlet_mode(deck: Deck, storage: &mut Storage) -> anyhow::Result<()> {
-    let mut current_streak = 0;
     let mut rng = thread_rng();
     let cards = deck.cards;
     let mut bucket: Vec<usize> = Vec::new();
     let mut balance = storage.get_currency()?;
+    let mut current_streak = storage.get_streak()?;
 
     // refill bucket by cloning cards and shuffling
     fn refill_bucket(cards: &[Card], bucket: &mut Vec<usize>, rng: &mut ThreadRng) {
@@ -167,6 +168,7 @@ pub fn gauntlet_mode(deck: Deck, storage: &mut Storage) -> anyhow::Result<()> {
             println!();
             display_card(card, false);
             let mut bet = gauntlet_reward(current_streak);
+            let mut is_doubled = false;
             println!("What's on the other side?\t\tBet: ${}", bet);
             let choices = get_multiple_choice_for_card(card, &cards, &mut rng, false, None);
             println!(
@@ -189,7 +191,8 @@ pub fn gauntlet_mode(deck: Deck, storage: &mut Storage) -> anyhow::Result<()> {
                     RoundAction::Timeout => {
                         println!("\n\nBUST! You ran out of time.");
                         balance -= bet; // Penalty
-                        storage._update_currency(-bet)?;
+                        storage.update_currency(-bet)?;
+                        storage.update_streak(-current_streak)?;
                         current_streak = 0;
                         break 'streak;
                     }
@@ -205,13 +208,15 @@ pub fn gauntlet_mode(deck: Deck, storage: &mut Storage) -> anyhow::Result<()> {
                         {
                             println!("\n\n✓ Correct!");
                             balance += bet;
-                            storage._update_currency(bet)?;
+                            storage.update_currency(bet)?;
+                            storage.update_streak(1)?;
                             current_streak += 1;
                             break 'input;
                         } else {
                             println!("\n\nX Wrong! Answer was: {}", card.definition);
                             balance -= bet;
-                            storage._update_currency(-bet)?;
+                            storage.update_currency(-bet)?;
+                            storage.update_streak(-current_streak)?;
                             current_streak = 0;
                             break 'streak;
                         }
@@ -222,6 +227,11 @@ pub fn gauntlet_mode(deck: Deck, storage: &mut Storage) -> anyhow::Result<()> {
                         break 'streak;
                     }
                     RoundAction::Double => {
+                        if is_doubled {
+                            println!("ALREADY DOUBLED DOWN. RESUMING TIMER.");
+                            time_allowed -= now.elapsed().as_secs_f64();
+                            continue 'input;
+                        }
                         if balance < 2 * bet {
                             println!("NOT ENOUGH BALANCE TO DOUBLE DOWN. RESUMING TIMER.");
                             time_allowed -= now.elapsed().as_secs_f64();
@@ -229,12 +239,14 @@ pub fn gauntlet_mode(deck: Deck, storage: &mut Storage) -> anyhow::Result<()> {
                         }
                         // timer resets when you double, should I change that?
                         bet *= 2;
+                        is_doubled = true;
                         println!("DOUBLE DOWN ACTIVATED! RESET TIMER. Bet: ${}", bet);
                         stdout().flush().context("Failed to flush output")?;
                     }
                     RoundAction::Exit => {
                         println!("Quit game. Lost bet and streak of {}.", current_streak);
-                        storage._update_currency(-bet)?;
+                        storage.update_currency(-bet)?;
+                        storage.update_streak(-current_streak)?;
                         break 'main;
                     }
                 }
