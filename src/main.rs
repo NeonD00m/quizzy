@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand, command};
+use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 mod core;
 mod ui;

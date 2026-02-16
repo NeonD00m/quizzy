@@ -138,7 +138,8 @@ pub fn gauntlet_mode(deck: Deck, storage: &mut Storage) -> anyhow::Result<()> {
 
     'main: loop {
         // 1. Clear screen and show Header
-        print!("\x1B[2J\x1B[1;1H"); // ANSI clear screen code
+        // print!("\x1B[2J\x1B[1;1H"); // ANSI clear screen code
+        println!("\n\n\n");
         println!("========================================");
         println!("           STUDY CASINO: OPEN           ");
         println!("========================================");
