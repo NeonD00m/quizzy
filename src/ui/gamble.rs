@@ -7,7 +7,6 @@ use rand::seq::SliceRandom;
 use rand::{rngs::ThreadRng, thread_rng};
 use std::cmp::max;
 use std::io::{Write, stdout};
-use std::thread::current;
 use std::time::{Duration, Instant};
 
 fn wrap_text(s: &str, max_width: usize) -> Vec<String> {

@@ -112,7 +112,7 @@ impl Storage {
                 |r| r.get(0),
             )
             .optional()
-            .context("failed to query user_profile.updated_at")?;
+            .context("Failed to query updated_at in user_profile.")?;
         Ok(val)
     }
 
@@ -129,9 +129,9 @@ impl Storage {
 
         let mut out = Vec::new();
         for entry in
-            std::fs::read_dir(&dir).context("failed to read DB directory for failed sessions")?
+            std::fs::read_dir(&dir).context("Failed to read DB directory for failed sessions.")?
         {
-            let entry = entry.context("failed to read directory entry")?;
+            let entry = entry.context("Failed to read directory entry.")?;
             let p = entry.path();
             if let Some(name) = p.file_name().and_then(|n| n.to_str())
                 && name.starts_with("quizzy_failed_session_")
@@ -147,7 +147,7 @@ impl Storage {
     /// Format expected: each line `card_id,corrects,incorrects`
     pub fn read_failed_session_file(&self, path: &std::path::Path) -> Result<Vec<(i64, i64, i64)>> {
         let s = std::fs::read_to_string(path)
-            .with_context(|| format!("failed to read failed session file {}", path.display()))?;
+            .with_context(|| format!("Failed to read failed session file {}.", path.display()))?;
         let mut out = Vec::new();
         for (line_number, line) in s.lines().enumerate() {
             let line = line.trim();
@@ -157,28 +157,28 @@ impl Storage {
             let parts: Vec<&str> = line.split(',').collect();
             if parts.len() != 3 {
                 return Err(anyhow::anyhow!(
-                    "invalid format in {} at line {}",
+                    "Invalid format in {} at line {}.",
                     path.display(),
                     line_number + 1
                 ));
             }
             let a: i64 = parts[0].trim().parse().with_context(|| {
                 format!(
-                    "invalid card_id in {} line {}",
+                    "Invalid card_id in {} line {}.",
                     path.display(),
                     line_number + 1
                 )
             })?;
             let b: i64 = parts[1].trim().parse().with_context(|| {
                 format!(
-                    "invalid corrects in {} line {}",
+                    "Invalid corrects in {} line {}.",
                     path.display(),
                     line_number + 1
                 )
             })?;
             let c: i64 = parts[2].trim().parse().with_context(|| {
                 format!(
-                    "invalid incorrects in {} line {}",
+                    "Invalid incorrects in {} line {}.",
                     path.display(),
                     line_number + 1
                 )
@@ -191,7 +191,7 @@ impl Storage {
     /// Remove a failed session file after replay or if user discards it.
     pub fn remove_failed_session_file(&self, path: &Path) -> Result<()> {
         std::fs::remove_file(path)
-            .with_context(|| format!("failed to remove failed session file {}", path.display()))?;
+            .with_context(|| format!("Failed to remove failed session file {}.", path.display()))?;
         Ok(())
     }
 
@@ -201,19 +201,19 @@ impl Storage {
 
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).with_context(|| {
-                format!("failed to create database parent directory {:?}", parent)
+                format!("Failed to create database parent directory {:?}.", parent)
             })?;
         }
 
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE;
         let conn = Connection::open_with_flags(&path, flags)
-            .with_context(|| format!("failed to open sqlite database at {:?}", path))?;
+            .with_context(|| format!("Failed to open sqlite database at {:?}.", path))?;
 
         conn.busy_timeout(std::time::Duration::from_secs(5))
-            .context("failed to set busy_timeout on sqlite connection")?;
+            .context("Failed to set busy_timeout on sqlite connection.")?;
 
         // initialize schema and pragmas
-        init_db(&conn).context("failed to initialize database schema")?;
+        init_db(&conn).context("Failed to initialize database schema.")?;
 
         Ok(Self { conn })
     }
@@ -223,13 +223,13 @@ impl Storage {
         let mut stmt = self
             .conn
             .prepare("SELECT id, name FROM decks ORDER BY name")
-            .context("failed to prepare list_decks")?;
+            .context("Failed to prepare list_decks.")?;
         let rows = stmt
             .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
-            .context("failed to query decks")?;
+            .context("Failed to query decks.")?;
         let mut out = Vec::new();
         for r in rows {
-            out.push(r.context("failed mapping deck row")?);
+            out.push(r.context("Failed mapping deck row.")?);
         }
         Ok(out)
     }
@@ -246,32 +246,32 @@ impl Storage {
         self.conn.execute(
             "INSERT INTO decks (name, description, created_at, updated_at, source_path, source_hash) VALUES (?1, ?2, ?3, ?3, ?4, ?5)",
             params![deck.name, None::<&str>, now, source_path, source_hash],
-        ).context("failed to insert deck row")?;
+        ).context("Failed to insert deck row.")?;
         let deck_id = self.conn.last_insert_rowid();
 
         let tx = self
             .conn
             .transaction()
-            .context("failed to start transaction for deck insert")?;
+            .context("Failed to start transaction for deck insert.")?;
         for c in deck.cards {
             tx.execute(
                 "INSERT INTO cards (deck_id, term, definition, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)",
                 params![deck_id, c.term, c.definition, now],
-            ).context("failed to insert card")?;
+            ).context("Failed to insert card.")?;
             let card_id = tx.last_insert_rowid();
             tx.execute(
                 "INSERT INTO card_stats (card_id) VALUES (?1)",
                 params![card_id],
             )
-            .context("failed to insert card_stats")?;
+            .context("Failed to insert card_stats.")?;
         }
         tx.execute(
             "INSERT INTO deck_stats (deck_id) VALUES (?1)",
             params![deck_id],
         )
-        .context("failed to insert deck_stats")?;
+        .context("Failed to insert deck_stats.")?;
         tx.commit()
-            .context("failed to commit create_deck transaction")?;
+            .context("Failed to commit create_deck transaction.")?;
 
         Ok(deck_id)
     }
@@ -282,14 +282,14 @@ impl Storage {
         self.conn.execute(
             "INSERT INTO cards (deck_id, term, definition, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)",
             params![deck_id, term, definition, now],
-        ).context("failed to insert card")?;
+        ).context("Failed to insert card.")?;
         let card_id = self.conn.last_insert_rowid();
         self.conn
             .execute(
                 "INSERT INTO card_stats (card_id) VALUES (?1)",
                 params![card_id],
             )
-            .context("failed to insert card_stats")?;
+            .context("Failed to insert card_stats.")?;
         Ok(card_id)
     }
 
@@ -297,7 +297,7 @@ impl Storage {
     pub fn remove_card(&mut self, card_id: i64) -> Result<()> {
         self.conn
             .execute("DELETE FROM cards WHERE id = ?1", params![card_id])
-            .context("failed to delete card")?;
+            .context("Failed to delete card.")?;
         Ok(())
     }
 
@@ -308,7 +308,7 @@ impl Storage {
             .query_row("SELECT id FROM decks WHERE name = ?1", params![name], |r| {
                 r.get(0)
             })
-            .with_context(|| format!("deck named '{}' not found", name))?;
+            .with_context(|| format!("Deck named '{}' not found.", name))?;
         self.get_deck_by_id(deck_id)
     }
 
@@ -321,12 +321,12 @@ impl Storage {
                 params![deck_id],
                 |r| r.get(0),
             )
-            .context("failed to query deck metadata")?;
+            .context("Failed to query deck metadata.")?;
 
         let mut stmt = self
             .conn
             .prepare("SELECT id, term, definition FROM cards WHERE deck_id = ?1 ORDER BY id")
-            .context("failed to prepare select cards for deck")?;
+            .context("Failed to prepare select cards for deck.")?;
         let rows = stmt
             .query_map(params![deck_id], |r| {
                 Ok(Card {
@@ -335,11 +335,11 @@ impl Storage {
                     definition: r.get(2)?,
                 })
             })
-            .context("failed to query_map cards")?;
+            .context("Failed to query_map cards.")?;
 
         let mut cards = Vec::new();
         for r in rows {
-            cards.push(r.context("failed mapping card row")?);
+            cards.push(r.context("Failed mapping card row.")?);
         }
 
         Ok(Deck {
@@ -353,7 +353,7 @@ impl Storage {
     pub fn delete_deck_by_id(&mut self, deck_id: i64) -> Result<()> {
         self.conn
             .execute("DELETE FROM decks WHERE id = ?1", params![deck_id])
-            .context("failed to delete deck")?;
+            .context("Failed to delete deck.")?;
         Ok(())
     }
 
@@ -364,7 +364,7 @@ impl Storage {
             .query_row("SELECT id FROM decks WHERE name = ?1", params![name], |r| {
                 r.get(0)
             })
-            .with_context(|| format!("deck '{}' not found", name))?;
+            .with_context(|| format!("Deck '{}' not found.", name))?;
         self.delete_deck_by_id(deck_id)
     }
 
@@ -378,7 +378,7 @@ impl Storage {
         let tx = self
             .conn
             .transaction()
-            .context("failed to start transaction")?;
+            .context("Failed to start transaction.")?;
 
         tx.execute(
             "UPDATE card_stats
@@ -389,7 +389,7 @@ impl Storage {
              WHERE card_id = ?5",
             params![score_delta, correct_delta, incorrect_delta, now, card_id],
         )
-        .context("failed to update card_stats")?;
+        .context("Failed to update card_stats.")?;
 
         let deck_id: i64 = tx
             .query_row(
@@ -397,7 +397,7 @@ impl Storage {
                 params![card_id],
                 |r| r.get(0),
             )
-            .context("failed to lookup deck_id for card")?;
+            .context("Failed to lookup deck_id for card.")?;
 
         tx.execute(
             "UPDATE deck_stats
@@ -407,9 +407,9 @@ impl Storage {
              WHERE deck_id = ?3",
             params![if correct { 1 } else { 0 }, now, deck_id],
         )
-        .context("failed to update deck_stats")?;
+        .context("Failed to update deck_stats.")?;
 
-        tx.commit().context("failed to commit transaction")?;
+        tx.commit().context("Failed to commit transaction.")?;
         Ok(())
     }
 
@@ -439,7 +439,7 @@ impl Storage {
                  WHERE card_id = ?5",
                 params![score_delta, corrects, incorrects, now, card_id],
             )
-            .with_context(|| format!("failed to update card_stats for card_id {}", card_id))?;
+            .with_context(|| format!("Failed to update card_stats for card_id {}.", card_id))?;
 
             let deck_id: i64 = tx
                 .query_row(
@@ -447,7 +447,7 @@ impl Storage {
                     params![card_id],
                     |r| r.get(0),
                 )
-                .with_context(|| format!("failed to lookup deck_id for card_id {}", card_id))?;
+                .with_context(|| format!("Failed to lookup deck_id for card_id {}.", card_id))?;
 
             let entry = deck_deltas.entry(deck_id).or_insert((0, 0));
             entry.0 += corrects + incorrects;
@@ -463,10 +463,10 @@ impl Storage {
                  WHERE deck_id = ?4",
                 params![q_delta, correct_delta, now, deck_id],
             )
-            .with_context(|| format!("failed to update deck_stats for deck_id {}", deck_id))?;
+            .with_context(|| format!("Failed to update deck_stats for deck_id {}.", deck_id))?;
         }
 
-        tx.commit().context("failed to commit batch transaction")?;
+        tx.commit().context("Failed to commit batch transaction.")?;
         Ok(())
     }
 
@@ -482,7 +482,7 @@ impl Storage {
         let tx = self
             .conn
             .transaction()
-            .context("failed to start transaction for adjust_confusion")?;
+            .context("Failed to start transaction for adjust_confusion.")?;
 
         // Try to read existing count
         let existing: Option<i64> = tx
@@ -492,7 +492,7 @@ impl Storage {
                 |r| r.get(0),
             )
             .optional()
-            .context("failed to query existing confusion")?;
+            .context("Failed to query existing confusion.")?;
 
         match existing {
             Some(old) => {
@@ -502,7 +502,7 @@ impl Storage {
                         "UPDATE card_confusions SET count = ?1 WHERE card_id = ?2 AND mistaken_card_id = ?3",
                         params![new, card_id, mistaken_with],
                     )
-                    .with_context(|| format!("failed to update confusion for card {} mistaken_with {}", card_id, mistaken_with))?;
+                    .with_context(|| format!("Failed to update confusion for card {} mistaken_with {}.", card_id, mistaken_with))?;
                 } else {
                     tx.execute(
                         "DELETE FROM card_confusions WHERE card_id = ?1 AND mistaken_card_id = ?2",
@@ -510,7 +510,7 @@ impl Storage {
                     )
                     .with_context(|| {
                         format!(
-                            "failed to delete confusion for card {} mistaken_with {}",
+                            "Failed to delete confusion for card {} mistaken_with {}.",
                             card_id, mistaken_with
                         )
                     })?;
@@ -525,7 +525,7 @@ impl Storage {
                     )
                     .with_context(|| {
                         format!(
-                            "failed to insert confusion for card {} mistaken_with {}",
+                            "Failed to insert confusion for card {} mistaken_with {}.",
                             card_id, mistaken_with
                         )
                     })?;
@@ -534,7 +534,7 @@ impl Storage {
         }
 
         tx.commit()
-            .context("failed to commit adjust_confusion transaction")?;
+            .context("Failed to commit adjust_confusion transaction.")?;
         Ok(())
     }
 
@@ -542,13 +542,13 @@ impl Storage {
     pub fn get_confusions(&self, card_id: i64) -> Result<Vec<(i64, i64)>> {
         let mut stmt = self.conn.prepare(
                 "SELECT mistaken_card_id, count FROM card_confusions WHERE card_id = ?1 ORDER BY count DESC",
-            ).context("failed to prepare get_confusions")?;
+            ).context("Failed to prepare get_confusions.")?;
         let rows = stmt
             .query_map(params![card_id], |r| Ok((r.get(0)?, r.get(1)?)))
-            .context("failed to query confusions")?;
+            .context("Failed to query confusions.")?;
         let mut out = Vec::new();
         for r in rows {
-            out.push(r.context("failed to map confusion row")?);
+            out.push(r.context("Failed to map confusion row.")?);
         }
         Ok(out)
     }
@@ -562,7 +562,7 @@ impl Storage {
                 params![card_id],
                 |r| r.get(0),
             )
-            .context(format!("failed to get learning_score for card {}", card_id))?;
+            .with_context(|| format!("Failed to get learning_score for card {}.", card_id))?;
         Ok(score)
     }
 
@@ -577,7 +577,7 @@ impl Storage {
              WHERE c.deck_id = ?1 AND s.learning_score > 0
              ORDER BY s.learning_score DESC",
             )
-            .context("failed to prepare get_positive_cards statement")?;
+            .context("Failed to prepare get_positive_cards statement.")?;
         let rows = stmt
             .query_map(params![deck_id], |r| {
                 Ok(Card {
@@ -586,11 +586,11 @@ impl Storage {
                     definition: r.get(3)?,
                 })
             })
-            .context("failed to query_map positive cards")?;
+            .context("Failed to query_map positive cards.")?;
 
         let mut out = Vec::new();
         for r in rows {
-            out.push(r.context("failed to map positive card row")?);
+            out.push(r.context("Failed to map positive card row.")?);
         }
         Ok(out)
     }
@@ -602,7 +602,7 @@ impl Storage {
                 "UPDATE user_profile SET currency = currency + ?1, updated_at = ?2 WHERE id = 1",
                 params![delta, now_secs()],
             )
-            .context("failed to update currency")?;
+            .context("Failed to update currency.")?;
         Ok(())
     }
 
@@ -612,7 +612,7 @@ impl Storage {
             .query_row("SELECT currency FROM user_profile WHERE id = 1", [], |r| {
                 r.get(0)
             })
-            .context("failed to query user currency")
+            .context("Failed to query user currency.")
     }
 
     /// Update persistent gauntlet streak in user_profile (positive or negative delta)
@@ -622,7 +622,7 @@ impl Storage {
                 "UPDATE user_profile SET streak = streak + ?1, updated_at = ?2 WHERE id = 1",
                 params![delta, now_secs()],
             )
-            .context("failed to update streak")?;
+            .context("Failed to update streak.")?;
         Ok(())
     }
 
@@ -632,7 +632,7 @@ impl Storage {
             .query_row("SELECT streak FROM user_profile WHERE id = 1", [], |r| {
                 r.get(0)
             })
-            .context("failed to query user streak")
+            .context("Failed to query user streak.")
     }
 }
 
@@ -643,13 +643,31 @@ pub fn init_db(conn: &Connection) -> Result<()> {
     let _ = conn.pragma_update(None, "journal_mode", "WAL");
 
     conn.execute_batch(SCHEMA)
-        .context("failed to execute schema SQL")?;
+        .context("Failed to execute schema SQL")?;
 
     conn.execute(
         "INSERT OR IGNORE INTO user_profile (id, currency) VALUES (1, 0);",
         [],
     )
-    .context("failed to ensure user_profile row")?;
+    .context("Failed to ensure user_profile row.")?;
+
+    // migration for adding 'streak' column because I'm stupid
+    let has_streak: Option<String> = conn
+        .query_row(
+            "SELECT name FROM pragma_table_info('user_profile') WHERE name = 'streak'",
+            [],
+            |r| r.get(0),
+        )
+        .optional()
+        .context("Failed to check for streak column in user_profile.")?;
+
+    if has_streak.is_none() {
+        conn.execute(
+            "ALTER TABLE user_profile ADD COLUMN streak INTEGER NOT NULL DEFAULT 0",
+            [],
+        )
+        .context("Failed to add streak column to user_profile.")?;
+    }
 
     Ok(())
 }
