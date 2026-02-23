@@ -73,6 +73,53 @@ pub fn display_multiple_choice(choices: &[Card], ask_term: bool) {
     }
 }
 
+pub fn display_feedback(response: &str, expected: &str, is_right: bool) {
+    let (width, _) = crossterm::terminal::size().unwrap_or((80, 24));
+    let width = width as usize;
+    let midpoint = std::cmp::min(width / 2, 50);
+    let max_col_width = midpoint.saturating_sub(4);
+
+    use crossterm::style::Stylize;
+
+    println!();
+    if is_right {
+        let wrapped = crate::ui::wrap_text(expected, width.saturating_sub(5));
+        for (i, line) in wrapped.iter().enumerate() {
+            if i == 0 {
+                println!("{} {}", "✓:".green().bold(), line);
+            } else {
+                println!("   {}", line);
+            }
+        }
+    } else {
+        let wrapped_left = crate::ui::wrap_text(response, max_col_width);
+        let wrapped_right = crate::ui::wrap_text(expected, max_col_width);
+
+        let max_lines = std::cmp::max(wrapped_left.len(), wrapped_right.len());
+        for i in 0..max_lines {
+            let left_line = wrapped_left.get(i).map(|s| s.as_str()).unwrap_or("");
+            let right_line = wrapped_right.get(i).map(|s| s.as_str()).unwrap_or("");
+
+            if i == 0 {
+                print!(
+                    "{} {:<width$}",
+                    "X:".red().bold(),
+                    left_line,
+                    width = midpoint.saturating_sub(3)
+                );
+                println!("{} {}", "✓:".green().bold(), right_line);
+            } else {
+                print!(
+                    "   {:<width$}",
+                    left_line,
+                    width = midpoint.saturating_sub(3)
+                );
+                println!("   {}", right_line);
+            }
+        }
+    }
+}
+
 /// Needs to be able to take in whatever context and card then update state like 'still_learning'
 fn answer(
     success: &bool,
@@ -213,7 +260,7 @@ pub fn learn_mode(
     }
 
     print!(
-        "Press [ENTER] to begin lesson on {} or [ESC] at any time to end the session. >",
+        "Press [ENTER] to begin lesson on {} or [ESC] at any time to end the session. > ",
         deck.name
     );
     stdout().flush().context("Failed to flush output.")?;
@@ -274,11 +321,9 @@ pub fn learn_mode(
             // check if typed answer is close enough
             let is_right = (expected.len() as f64 * 0.3_f64)
                 > (string_distance(response.to_lowercase(), expected.to_lowercase()) as f64);
-            if is_right {
-                println!("\n\n✓: {}\n", expected);
-            } else {
-                println!("\n\nX: {}\t\t\t✓: {}\n", response, expected);
-            }
+
+            display_feedback(&response, &expected, is_right);
+
             session_answered += 1;
             answer(
                 &is_right,
@@ -287,8 +332,6 @@ pub fn learn_mode(
                 &mut session_learned,
                 &mut session_still_learning,
             );
-            //     break;
-            // }
         } else {
             // fetch recorded confusions for this card (if persisted)
             let mut confusions_vec: Vec<(i64, i64)> = Vec::new();
@@ -314,9 +357,6 @@ pub fn learn_mode(
                 KeyCode::Char('4') => 3,
                 _ => {
                     println!();
-                    // stdout()
-                    //     .flush()
-                    //     .context("Failed to flush output before choice input.")?;
                     break 'questions;
                 }
             };
@@ -335,11 +375,9 @@ pub fn learn_mode(
                 chosen.term.clone()
             };
             let is_right = expected == response;
-            if is_right {
-                println!("\n✓: {}\n", response);
-            } else {
-                println!("\nX: {}\t\t\t✓: {}\n", response, expected);
-            }
+
+            display_feedback(&response, &expected, is_right);
+
             session_answered += 1;
             answer(
                 &is_right,

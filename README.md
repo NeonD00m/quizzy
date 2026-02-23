@@ -1,4 +1,4 @@
-# Quizzy
+# **Quizzy**
 
 [![CI](https://github.com/NeonD00m/quizzy/actions/workflows/ci.yml/badge.svg)](https://github.com/NeonD00m/quizzy/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/NeonD00m/quizzy?style=flat-square)](https://github.com/NeonD00m/quizzy/releases)
@@ -102,5 +102,3 @@ License
 Contact
 - GitHub: https://github.com/NeonD00m/quizzy
 - If you want a feature, open an issue and tag it "feature request".
-
-Enjoy studying — and let me know if you want the README tweaked further (screenshots, asciinema demo, or expanded examples).
