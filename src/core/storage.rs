@@ -42,7 +42,11 @@ CREATE TABLE IF NOT EXISTS card_stats (
     learning_score INTEGER NOT NULL DEFAULT 0,
     correct_count INTEGER NOT NULL DEFAULT 0,
     incorrect_count INTEGER NOT NULL DEFAULT 0,
-    last_answered_at INTEGER
+    last_answered_at INTEGER,
+    interval INTEGER NOT NULL DEFAULT 0,
+    repetitions INTEGER NOT NULL DEFAULT 0,
+    easiness_factor REAL NOT NULL DEFAULT 2.5,
+    next_due INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_card_stats_learning_score ON card_stats(learning_score);
@@ -144,10 +148,17 @@ impl Storage {
     }
 
     /// Parse a failed session file created by `write_failed_session_file`.
-    /// Format expected: each line `card_id,corrects,incorrects`
-    pub fn read_failed_session_file(&self, path: &std::path::Path) -> Result<Vec<(i64, i64, i64)>> {
-        let s = std::fs::read_to_string(path)
-            .with_context(|| format!("Failed to read failed session file {}.", path.display()))?;
+    /// Format expected: each line `card_id,corrects,incorrects,sm2_json`
+    pub fn read_failed_session_file(
+        &self,
+        path: &std::path::Path,
+    ) -> Result<Vec<(i64, i64, i64, Option<crate::core::learn::SM2Stats>)>> {
+        let s = std::fs::read_to_string(path).with_context(|| {
+            format!(
+                "Failed to read failed session file {}.",
+                path.display()
+            )
+        })?;
         let mut out = Vec::new();
         for (line_number, line) in s.lines().enumerate() {
             let line = line.trim();
@@ -155,9 +166,35 @@ impl Storage {
                 continue;
             }
             let parts: Vec<&str> = line.split(',').collect();
-            if parts.len() != 3 {
+            if parts.len() != 4 {
+                // Compatibility check: old format has 3 parts
+                if parts.len() == 3 {
+                    let a: i64 = parts[0].trim().parse().with_context(|| {
+                        format!(
+                            "Invalid card_id in {} line {}.",
+                            path.display(),
+                            line_number + 1
+                        )
+                    })?;
+                    let b: i64 = parts[1].trim().parse().with_context(|| {
+                        format!(
+                            "Invalid corrects in {} line {}.",
+                            path.display(),
+                            line_number + 1
+                        )
+                    })?;
+                    let c: i64 = parts[2].trim().parse().with_context(|| {
+                        format!(
+                            "Invalid incorrects in {} line {}.",
+                            path.display(),
+                            line_number + 1
+                        )
+                    })?;
+                    out.push((a, b, c, None));
+                    continue;
+                }
                 return Err(anyhow::anyhow!(
-                    "Invalid format in {} at line {}.",
+                    "Invalid format in {} at line {}. Expected 4 columns.",
                     path.display(),
                     line_number + 1
                 ));
@@ -183,7 +220,19 @@ impl Storage {
                     line_number + 1
                 )
             })?;
-            out.push((a, b, c));
+            let d_str = parts[3].trim();
+            let d: Option<crate::core::learn::SM2Stats> = if d_str == "NONE" {
+                None
+            } else {
+                Some(serde_json::from_str(d_str).with_context(|| {
+                    format!(
+                        "Invalid SM2Stats JSON in {} line {}.",
+                        path.display(),
+                        line_number + 1
+                    )
+                })?)
+            };
+            out.push((a, b, c, d));
         }
         Ok(out)
     }
@@ -414,8 +463,11 @@ impl Storage {
     }
 
     /// Batch commit at the end of a learning session.
-    /// `updates` is a slice of tuples: (card_id, corrects_delta, incorrects_delta)
-    pub fn commit_session_batch(&mut self, updates: &[(i64, i64, i64)]) -> Result<()> {
+    /// `updates` is a slice of tuples: (card_id, corrects_delta, incorrects_delta, Option<SM2Stats>)
+    pub fn commit_session_batch(
+        &mut self,
+        updates: &[(i64, i64, i64, Option<crate::core::learn::SM2Stats>)],
+    ) -> Result<()> {
         if updates.is_empty() {
             return Ok(());
         }
@@ -428,18 +480,46 @@ impl Storage {
 
         let mut deck_deltas: HashMap<i64, (i64, i64)> = HashMap::new(); // deck_id -> (questions_total_delta, questions_correct_delta)
 
-        for (card_id, corrects, incorrects) in updates {
+        for (card_id, corrects, incorrects, sm2) in updates {
             let score_delta = CORRECT_ANSWER_SCORE * corrects - INCORRECT_ANSWER_SCORE * incorrects;
-            tx.execute(
-                "UPDATE card_stats
+            if let Some(s) = sm2 {
+                let next_due = now + s.interval * 86400;
+                tx.execute(
+                    "UPDATE card_stats
+                 SET learning_score = learning_score + ?1,
+                     correct_count = correct_count + ?2,
+                     incorrect_count = incorrect_count + ?3,
+                     last_answered_at = ?4,
+                     interval = ?5,
+                     repetitions = ?6,
+                     easiness_factor = ?7,
+                     next_due = ?8
+                 WHERE card_id = ?9",
+                    params![
+                        score_delta,
+                        corrects,
+                        incorrects,
+                        now,
+                        s.interval,
+                        s.repetitions,
+                        s.easiness_factor,
+                        next_due,
+                        card_id
+                    ],
+                )
+                .with_context(|| format!("Failed to update card_stats for card_id {}.", card_id))?;
+            } else {
+                tx.execute(
+                    "UPDATE card_stats
                  SET learning_score = learning_score + ?1,
                      correct_count = correct_count + ?2,
                      incorrect_count = incorrect_count + ?3,
                      last_answered_at = ?4
                  WHERE card_id = ?5",
-                params![score_delta, corrects, incorrects, now, card_id],
-            )
-            .with_context(|| format!("Failed to update card_stats for card_id {}.", card_id))?;
+                    params![score_delta, corrects, incorrects, now, card_id],
+                )
+                .with_context(|| format!("Failed to update card_stats for card_id {}.", card_id))?;
+            }
 
             let deck_id: i64 = tx
                 .query_row(
@@ -566,6 +646,24 @@ impl Storage {
         Ok(score)
     }
 
+    /// Get current SM-2 stats for a card.
+    pub fn get_card_sm2_stats(&self, card_id: i64) -> Result<crate::core::learn::SM2Stats> {
+        use crate::core::learn::SM2Stats;
+        self.conn
+            .query_row(
+                "SELECT interval, repetitions, easiness_factor FROM card_stats WHERE card_id = ?1",
+                params![card_id],
+                |r| {
+                    Ok(SM2Stats {
+                        interval: r.get(0)?,
+                        repetitions: r.get(1)?,
+                        easiness_factor: r.get(2)?,
+                    })
+                },
+            )
+            .with_context(|| format!("Failed to get SM2 stats for card {}.", card_id))
+    }
+
     /// Get cards in the positive learning set for a deck (learning_score > 0)
     pub fn _get_positive_cards(&self, deck_id: i64) -> Result<Vec<Card>> {
         let mut stmt = self
@@ -667,6 +765,34 @@ pub fn init_db(conn: &Connection) -> Result<()> {
             [],
         )
         .context("Failed to add streak column to user_profile.")?;
+    }
+
+    // migration for SM-2 columns in card_stats
+    let sm2_cols = ["interval", "repetitions", "easiness_factor", "next_due"];
+    for col in sm2_cols {
+        let has_col: Option<String> = conn
+            .query_row(
+                &format!(
+                    "SELECT name FROM pragma_table_info('card_stats') WHERE name = '{}'",
+                    col
+                ),
+                [],
+                |r| r.get(0),
+            )
+            .optional()
+            .context("Failed to check for column in card_stats.")?;
+
+        if has_col.is_none() {
+            let sql = match col {
+                "interval" => "ALTER TABLE card_stats ADD COLUMN interval INTEGER NOT NULL DEFAULT 0",
+                "repetitions" => "ALTER TABLE card_stats ADD COLUMN repetitions INTEGER NOT NULL DEFAULT 0",
+                "easiness_factor" => "ALTER TABLE card_stats ADD COLUMN easiness_factor REAL NOT NULL DEFAULT 2.5",
+                "next_due" => "ALTER TABLE card_stats ADD COLUMN next_due INTEGER NOT NULL DEFAULT 0",
+                _ => continue,
+            };
+            conn.execute(sql, [])
+                .with_context(|| format!("Failed to add {} column to card_stats.", col))?;
+        }
     }
 
     Ok(())
