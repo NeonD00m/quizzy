@@ -1,0 +1,20 @@
+Hello	Hola
+Thank you	Gracias
+Please	Por favor
+Excuse me	Perdón / Disculpe
+How are you?	¿Cómo estás? / ¿Cómo está usted?
+I don't understand	No entiendo
+Where is the bathroom?	¿Dónde está el baño?
+Goodbye	Adiós
+Good morning	Buenos días
+Good afternoon	Buenas tardes
+Good night	Buenas noches
+How much does it cost?	¿Cuánto cuesta?
+Where is...?	¿Dónde está...?
+Can you help me?	¿Me puede ayudar?
+I am lost	Estoy perdido
+I would like...	Me gustaría...
+Yes	Sí
+No	No
+Check, please	La cuenta, por favor
+Where are you from?	¿De dónde eres?

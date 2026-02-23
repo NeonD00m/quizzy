@@ -1,0 +1,64 @@
+{
+  "cards": [
+    {
+      "term": "Ownership",
+      "definition": "Rust's system for tracking memory: each value has one owner at a time"
+    },
+    {
+      "term": "Borrowing",
+      "definition": "Letting code temporarily use a value without taking ownership"
+    },
+    {
+      "term": "Mutable binding",
+      "definition": "A variable declared with `mut` that allows changing its value"
+    },
+    {
+      "term": "Lifetime",
+      "definition": "Annotations that describe the scope for which a reference is valid"
+    },
+    {
+      "term": "Trait",
+      "definition": "A collection of methods that define shared behavior (like interfaces)"
+    },
+    {
+      "term": "Cargo",
+      "definition": "Rust’s build system and package manager"
+    },
+    {
+      "term": "Struct",
+      "definition": "A custom data type that lets you name and package together multiple related values"
+    },
+    {
+      "term": "Enum",
+      "definition": "A type that can be any one of several variants"
+    },
+    {
+      "term": "Pattern matching",
+      "definition": "A mechanism that allows comparing a value against a series of patterns"
+    },
+    {
+      "term": "Option",
+      "definition": "An enum that represents a value that can be either something or nothing"
+    },
+    {
+      "term": "Result",
+      "definition": "An enum that represents either success (Ok) or failure (Err)"
+    },
+    {
+      "term": "Crate",
+      "definition": "A compilation unit in Rust (either a library or an executable)"
+    },
+    {
+      "term": "Module",
+      "definition": "A way to organize code into a hierarchy for readability and reuse"
+    },
+    {
+      "term": "Unsafe Rust",
+      "definition": "Code that bypasses some of Rust's safety checks (e.g., raw pointers)"
+    },
+    {
+      "term": "Zero-cost abstraction",
+      "definition": "High-level features that compile to code as efficient as hand-written low-level code"
+    }
+  ]
+}

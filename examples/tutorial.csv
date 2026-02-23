@@ -1,0 +1,8 @@
+quizzy new,Create a new named deck from a file (e.g. CSV/TSV/JSON)
+quizzy import,Import a Quizlet JSON export into a saved deck
+quizzy list,List all saved decks and their IDs
+quizzy learn,Start an interactive quiz session with progress tracking
+quizzy cards,View flashcards for a deck (use --shuffle to randomize)
+quizzy gamble,Play a high-stakes gauntlet game to test your knowledge
+quizzy delete,Remove a saved deck from the local database
+quizzy help,Show usage information for any command

@@ -1,0 +1,136 @@
+Algorithm	A step-by-step procedure for solving a problem or performing a computation
+Algorithmic complexity	A description (often Big-O) of how resources used by an algorithm scale with input size
+Binary search	A divide-and-conquer algorithm that finds an item by repeatedly halving the search interval
+Hash table	A data structure that maps keys to values using a hash function for average O(1) access
+Deadlock	A situation where two or more processes are blocked forever waiting for resources held by each other
+Recursion	When a function calls itself to solve a smaller instance of the same problem
+Polymorphism	The ability of different types to be accessed through the same interface in OOP
+Concurrency	Multiple computations happening during overlapping time periods
+Process	A program in execution, with its own address space
+Thread	A lightweight unit of execution within a process
+Mutex	A mutual exclusion object that prevents multiple threads from accessing a shared resource simultaneously
+Virtual Memory	A memory management technique that provides an "idealized" abstraction of the storage resources
+DNS	Domain Name System, which translates domain names to IP addresses
+HTTP	Hypertext Transfer Protocol, the foundation of data communication for the web
+TCP	Transmission Control Protocol, a reliable connection-oriented protocol
+UDP	User Datagram Protocol, a fast but unreliable connectionless protocol
+IP	Internet Protocol, responsible for addressing and routing packets
+MAC Address	A unique identifier assigned to a network interface controller
+Encapsulation	Bundling of data and methods into a single unit (class)
+Inheritance	When an object or class is based on another object or class
+Abstraction	Hiding the complex implementation details and showing only the necessary features
+Compiler	A program that translates source code from a high-level language to a lower-level language
+Interpreter	A program that executes instructions directly without prior compilation
+Operating System	System software that manages computer hardware, software resources, and provides common services
+Kernel	The core part of an OS that manages system resources and hardware communication
+File System	A method and data structure that an OS uses to control how data is stored and retrieved
+Database	An organized collection of structured information, or data
+SQL	Structured Query Language, used for managing relational databases
+NoSQL	Non-relational database that provides a mechanism for storage and retrieval of data
+Normalization	The process of organizing data in a database to reduce redundancy
+Acid Properties	Atomicity, Consistency, Isolation, Durability; ensures database transactions are processed reliably
+Indexing	A database optimization technique used to speed up data retrieval operations
+REST	Representational State Transfer, an architectural style for designing networked applications
+JSON	JavaScript Object Notation, a lightweight data-interchange format
+XML	Extensible Markup Language, a markup language that defines a set of rules for encoding documents
+API	Application Programming Interface, a set of protocols and tools for building software
+Graph	A non-linear data structure consisting of nodes and edges
+Tree	A hierarchical data structure with a root node and child nodes
+Queue	A first-in, first-out (FIFO) data structure
+Stack	A last-in, first-out (LIFO) data structure
+Linked List	A linear collection of data elements whose order is not given by their physical placement in memory
+Binary Tree	A tree data structure in which each node has at most two children
+Array	A data structure consisting of a collection of elements, each identified by at least one array index or key
+Quicksort	An efficient, divide-and-conquer sorting algorithm
+Mergesort	A stable, divide-and-conquer sorting algorithm
+Heap	A specialized tree-based data structure that satisfies the heap property
+Primary Key	A unique identifier for each record in a database table
+Foreign Key	A field in one table that uniquely identifies a row of another table
+Join	A SQL operation used to combine rows from two or more tables
+Encryption	The process of encoding information to prevent unauthorized access
+Hashing	The process of converting data into a fixed-size string of characters
+Public Key Cryptography	A cryptographic system that uses pairs of keys: public keys and private keys
+SSL/TLS	Protocols for providing secure communication over a computer network
+Firewall	A network security system that monitors and controls incoming and outgoing network traffic
+Phishing	The fraudulent practice of sending emails to induce individuals to reveal personal information
+Malware	Software that is specifically designed to disrupt, damage, or gain unauthorized access to a computer system
+Bit	The smallest unit of data in a computer, with a value of either 0 or 1
+Byte	A unit of data that is eight bits long
+CPU	Central Processing Unit, the "brain" of the computer
+RAM	Random Access Memory, a type of computer memory that can be accessed randomly
+ROM	Read-Only Memory, a type of storage medium that permanently stores data
+GPU	Graphics Processing Unit, specialized for parallel processing tasks
+SSD	Solid-State Drive, a storage device that uses flash memory
+Hard Drive	A data storage device that uses magnetic storage to store and retrieve digital information
+Motherboard	The main printed circuit board in a computer
+BIOS	Basic Input/Output System, firmware used to perform hardware initialization during the booting process
+Shell	A user interface for access to an operating system's services
+Bash	Bourne Again SHell, a popular Unix shell and command language
+PowerShell	A task automation and configuration management framework from Microsoft
+Git	A distributed version control system for tracking changes in source code
+Repository	A central location where data is stored and managed
+Commit	A snapshot of changes in a version control system
+Merge	Combining changes from different branches in version control
+Branch	A parallel version of a repository
+Big O Notation	Mathematical notation used to describe the asymptotic behavior of functions
+Unit Testing	Testing individual units or components of a software application
+Integration Testing	Testing the interaction between different units or components
+Functional Testing	Testing the software against the functional requirements
+Load Testing	Testing the performance of a software application under a specific expected load
+Agile	A set of values and principles for software development under which requirements and solutions evolve
+Scrum	A framework for project management that emphasizes incremental progress
+Docker	A platform for developing, shipping, and running applications in containers
+Kubernetes	An open-source system for automating deployment, scaling, and management of containerized applications
+CI/CD	Continuous Integration and Continuous Deployment/Delivery
+Serverless	A cloud computing execution model where the cloud provider manages the server
+Microservices	An architectural style that structures an application as a collection of services
+Cloud Computing	The delivery of computing services over the internet
+IaaS	Infrastructure as a Service
+PaaS	Platform as a Service
+SaaS	Software as a Service
+VPN	Virtual Private Network, provides a secure connection over a less secure network
+Proxy	An intermediary server that separates end users from the websites they browse
+Load Balancer	A device that distributes network or application traffic across a number of servers
+Caching	Storing copies of data in a temporary storage location for faster access
+Zero Day	A vulnerability in software that is unknown to the vendor
+Cookie	A small piece of data stored on the user's computer by the web browser
+Session	A temporary and interactive information interchange between two or more communicating devices
+Stateful	A system that remembers preceding events or user interactions
+Stateless	A system that does not retain any information about previous interactions
+Regex	Regular Expression, a sequence of characters that forms a search pattern
+IDE	Integrated Development Environment, a software application that provides comprehensive facilities to computer programmers
+Framework	A platform for developing software applications
+Library	A collection of pre-written code that developers can use to optimize tasks
+Technical Debt	The implied cost of additional rework caused by choosing an easy solution now instead of using a better approach
+Refactoring	The process of restructuring existing computer code without changing its external behavior
+Debugging	The process of finding and resolving bugs within computer programs
+Bitwise Operator	An operator that performs a calculation on the individual bits of a number
+Recursion Depth	The number of times a function calls itself
+Immutable	An object whose state cannot be modified after it is created
+Mutable	An object whose state can be modified after it is created
+Type Safety	The extent to which a programming language discourages or prevents type errors
+Static Typing	Type checking is performed during compile-time
+Dynamic Typing	Type checking is performed during run-time
+Garbage Collection	A form of automatic memory management
+Big Data	Extremely large data sets that may be analyzed computationally to reveal patterns
+Machine Learning	A field of AI that focuses on building systems that learn from data
+Neural Network	A series of algorithms that endeavors to recognize underlying relationships in a set of data
+Deep Learning	A subfield of machine learning based on artificial neural networks with representation learning
+Big Endian	The most significant byte of a word is stored at the smallest memory address
+Little Endian	The least significant byte of a word is stored at the smallest memory address
+Interrupt	A signal to the processor emitted by hardware or software indicating an event that needs immediate attention
+DMA	Direct Memory Access, allows certain hardware subsystems to access main system memory independently of the CPU
+BIOS	Basic Input/Output System
+RAID	Redundant Array of Independent Disks, a way of storing the same data in different places on multiple hard disks
+Virtualization	The act of creating a virtual version of something, including virtual computer hardware platforms
+Container	A standard unit of software that packages up code and all its dependencies
+Edge Computing	A distributed computing paradigm that brings computation and data storage closer to the sources of data
+Blockchain	A growing list of records, called blocks, that are linked using cryptography
+Smart Contract	Self-Executing contracts with the terms of the agreement between buyer and seller being directly written into lines of code
+Front End	The part of a software system that interacts directly with the user
+Back End	The part of a software system that manages the server, database, and application logic
+Full Stack	A developer who can work on both the front end and back end of an application
+DevOps	A set of practices that combines software development and IT operations
+Cybersecurity	The practice of protecting systems, networks, and programs from digital attacks
+IoT	Internet of Things, the network of physical objects embedded with sensors and software
+Embedded System	A computer system with a dedicated function within a larger mechanical or electrical system
