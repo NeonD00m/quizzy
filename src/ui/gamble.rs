@@ -1,6 +1,10 @@
 use crate::core::learn::get_multiple_choice_for_card;
 use crate::core::{deck::*, storage::Storage};
-use crate::ui::input::{RoundAction, enter_input, read_input_with_fuse};
+use crate::ui::learn::display_multiple_choice;
+use crate::ui::{
+    cards::wrap_text,
+    input::{RoundAction, enter_input, read_input_with_fuse},
+};
 use anyhow::Context;
 use crossterm::{event::KeyCode, terminal::size};
 use rand::seq::SliceRandom;
@@ -8,71 +12,6 @@ use rand::{rngs::ThreadRng, thread_rng};
 use std::cmp::max;
 use std::io::{Write, stdout};
 use std::time::{Duration, Instant};
-
-fn wrap_text(s: &str, max_width: usize) -> Vec<String> {
-    if max_width == 0 {
-        println!("What the helliante");
-        return vec!["".to_string()];
-    }
-
-    let mut lines: Vec<String> = Vec::new();
-    let mut current = String::new();
-
-    for word in s.split_whitespace() {
-        let word_len = word.chars().count();
-        let cur_len = current.chars().count();
-
-        if cur_len == 0 {
-            // current line empty: if word fits, push, otherwise break the word
-            if word_len <= max_width {
-                current.push_str(word);
-            } else {
-                // break long word into chunks
-                let mut start = 0;
-                let chars: Vec<char> = word.chars().collect();
-                while start < chars.len() {
-                    let end = usize::min(start + max_width, chars.len());
-                    let chunk: String = chars[start..end].iter().collect();
-                    lines.push(chunk);
-                    start = end;
-                }
-            }
-        } else {
-            // consider adding a space + word
-            if cur_len + 1 + word_len <= max_width {
-                current.push(' ');
-                current.push_str(word);
-            } else {
-                // flush current and start new line
-                lines.push(current);
-                current = String::new();
-                if word_len <= max_width {
-                    current.push_str(word);
-                } else {
-                    // break long word into chunks
-                    let mut start = 0;
-                    let chars: Vec<char> = word.chars().collect();
-                    while start < chars.len() {
-                        let end = usize::min(start + max_width, chars.len());
-                        let chunk: String = chars[start..end].iter().collect();
-                        lines.push(chunk);
-                        start = end;
-                    }
-                }
-            }
-        }
-    }
-
-    if !current.is_empty() {
-        lines.push(current);
-    }
-
-    if lines.is_empty() {
-        lines.push(String::new());
-    }
-
-    lines
-}
 
 fn display_card(c: &Card, flipped: bool) {
     let (term_w, _term_h) = size().unwrap_or((80, 24)); // 80x24 fallback
@@ -137,8 +76,7 @@ pub fn gauntlet_mode(deck: Deck, storage: &mut Storage) -> anyhow::Result<()> {
     }
 
     'main: loop {
-        // 1. Clear screen and show Header
-        // print!("\x1B[2J\x1B[1;1H"); // ANSI clear screen code
+        // print!("\x1B[2J\x1B[1;1H"); // clear screen? idk seems unnecessary
         println!("\n\n\n");
         println!("========================================");
         println!("           STUDY CASINO: OPEN           ");
@@ -156,7 +94,6 @@ pub fn gauntlet_mode(deck: Deck, storage: &mut Storage) -> anyhow::Result<()> {
         }
         println!();
         'streak: loop {
-            // 2. Get random card logic here...
             if bucket.is_empty() {
                 refill_bucket(&cards, &mut bucket, &mut rng);
             }
@@ -170,13 +107,7 @@ pub fn gauntlet_mode(deck: Deck, storage: &mut Storage) -> anyhow::Result<()> {
             let mut is_doubled = false;
             println!("What's on the other side?\t\tBet: ${}", bet);
             let choices = get_multiple_choice_for_card(card, &cards, &mut rng, false, None);
-            println!(
-                "(1) {}\t\t\t(2) {}\n(3) {}\t\t\t(4) {}",
-                choices[0].definition,
-                choices[1].definition,
-                choices[2].definition,
-                choices[3].definition,
-            );
+            display_multiple_choice(&choices, true);
 
             // START THE INPUT LOOP
             let now = Instant::now();
@@ -250,7 +181,7 @@ pub fn gauntlet_mode(deck: Deck, storage: &mut Storage) -> anyhow::Result<()> {
                     }
                 }
             }
-            // 8. Pause before next round so they can see the result
+            // pause before next round so they can see the result and rest a second
             std::thread::sleep(Duration::from_secs(2));
         }
         print!(

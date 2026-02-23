@@ -6,7 +6,7 @@ use rand::seq::SliceRandom;
 use rand::thread_rng;
 use std::cmp::max;
 
-fn wrap_text(s: &str, max_width: usize) -> Vec<String> {
+pub fn wrap_text(s: &str, max_width: usize) -> Vec<String> {
     if max_width == 0 {
         println!("What the helliante");
         return vec!["".to_string()];
@@ -169,6 +169,8 @@ pub fn cards_mode(deck: Deck, shuffle: bool) -> anyhow::Result<()> {
                 break;
             }
         }
+
+        println!();
         if index >= len {
             println!("Restarting from beginning. Press Escape to exit.");
             index = 0;

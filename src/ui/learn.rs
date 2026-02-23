@@ -13,6 +13,65 @@ use rand::thread_rng;
 use std::collections::{HashMap, HashSet};
 use std::io::Write as IoWrite;
 use std::io::stdout;
+use std::time::Duration;
+
+pub fn display_multiple_choice(choices: &[Card], ask_term: bool) {
+    let (width, _) = crossterm::terminal::size().unwrap_or((80, 24));
+    let width = width as usize;
+
+    // midpoint of screen, but cap it to avoid extreme spacing
+    let midpoint = std::cmp::min(width / 2, 50);
+    // column padding and max width for text itself
+    let col_padding = 4;
+    let max_col_width = midpoint.saturating_sub(col_padding);
+
+    fn get_choice_text(c: &Card, ask_term: bool) -> String {
+        if ask_term {
+            c.definition.clone()
+        } else {
+            c.term.clone()
+        }
+    }
+
+    // helper to print two wrapped strings side-by-side
+    let print_row = |idx1: usize, idx2: usize| {
+        let text1 = format!(
+            "({}) {}",
+            idx1 + 1,
+            get_choice_text(&choices[idx1], ask_term)
+        );
+        let text2 = format!(
+            "({}) {}",
+            idx2 + 1,
+            get_choice_text(&choices[idx2], ask_term)
+        );
+
+        let wrapped1 = crate::ui::wrap_text(&text1, max_col_width);
+        let wrapped2 = crate::ui::wrap_text(&text2, max_col_width);
+
+        let max_lines = std::cmp::max(wrapped1.len(), wrapped2.len());
+        for i in 0..max_lines {
+            let left = wrapped1.get(i).map(|s| s.as_str()).unwrap_or("");
+            let right = wrapped2.get(i).map(|s| s.as_str()).unwrap_or("");
+
+            // print left column and pad to midpoint
+            print!("{:<width$}", left, width = midpoint);
+            // print right column
+            println!("{}", right);
+        }
+        println!(); // space between pairs
+    };
+
+    if choices.len() >= 4 {
+        print_row(0, 1);
+        print_row(2, 3);
+    } else {
+        // Fallback for weird cases where we don't have 4 choices
+        for (i, c) in choices.iter().enumerate() {
+            println!("({}) {}", i + 1, get_choice_text(c, ask_term));
+        }
+    }
+}
 
 /// Needs to be able to take in whatever context and card then update state like 'still_learning'
 fn answer(
@@ -207,19 +266,6 @@ pub fn learn_mode(
                 println!("\n");
                 break 'questions;
             };
-            // print!("Type the answer or 'quit' > ");
-            // stdout().flush().context("Failed to flush output.")?;
-            // loop {
-            //     input.clear();
-            //     if stdin().read_line(&mut input).is_err() {
-            //         println!("Error reading input, try again.");
-            //         input.clear();
-            //         continue;
-            //     }
-            //     let response = input.trim();
-            //     if response == "quit" {
-            //         break 'questions;
-            //     }
             let expected = if ask_term {
                 c.definition.clone()
             } else {
@@ -254,20 +300,9 @@ pub fn learn_mode(
             }
             let choices =
                 get_multiple_choice_for_card(c, &cards, &mut rng, ask_term, Some(&confusions_vec));
-            if ask_term {
-                println!(
-                    "(1) {}\t\t\t(2) {}\n(3) {}\t\t\t(4) {}",
-                    choices[0].definition,
-                    choices[1].definition,
-                    choices[2].definition,
-                    choices[3].definition,
-                );
-            } else {
-                println!(
-                    "(1) {}\t\t\t(2) {}\n(3) {}\t\t\t(4) {}",
-                    choices[0].term, choices[1].term, choices[2].term, choices[3].term,
-                );
-            }
+
+            display_multiple_choice(&choices, ask_term);
+
             print!("Enter 1-4 > ");
             stdout()
                 .flush()
@@ -338,14 +373,18 @@ pub fn learn_mode(
                 }
             }
         }
+
+        // a nice pause to keep things at a calm pace
+        std::thread::sleep(Duration::from_secs(2));
     }
 
     // use nostats to decide whether to update the saved stats for this deck
     if !nostats && !session_updates.is_empty() {
         // transform the data, so sad but it had to be done
-        let mut updates_vec: Vec<(i64, i64, i64)> = Vec::new();
+        let mut updates_vec: Vec<(i64, i64, i64, Option<SM2Stats>)> = Vec::new();
         for (card_id, (corrects, incorrects)) in session_updates.into_iter() {
-            updates_vec.push((card_id, corrects, incorrects));
+            // For now we pass None for SM2Stats until we implement the UI for quality rating
+            updates_vec.push((card_id, corrects, incorrects, None));
         }
 
         // try to commit with retries for "wtf" errors
