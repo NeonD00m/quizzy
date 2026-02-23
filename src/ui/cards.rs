@@ -1,75 +1,10 @@
-use crate::ui::input::cards_input;
+use crate::ui::{input::cards_input, wrap_text};
 use crate::{core::deck::*, ui::input::RawModeGuard};
 use anyhow::Context;
 use crossterm::{event::KeyCode, terminal::size};
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use std::cmp::max;
-
-pub fn wrap_text(s: &str, max_width: usize) -> Vec<String> {
-    if max_width == 0 {
-        println!("What the helliante");
-        return vec!["".to_string()];
-    }
-
-    let mut lines: Vec<String> = Vec::new();
-    let mut current = String::new();
-
-    for word in s.split_whitespace() {
-        let word_len = word.chars().count();
-        let cur_len = current.chars().count();
-
-        if cur_len == 0 {
-            // current line empty: if word fits, push, otherwise break the word
-            if word_len <= max_width {
-                current.push_str(word);
-            } else {
-                // break long word into chunks
-                let mut start = 0;
-                let chars: Vec<char> = word.chars().collect();
-                while start < chars.len() {
-                    let end = usize::min(start + max_width, chars.len());
-                    let chunk: String = chars[start..end].iter().collect();
-                    lines.push(chunk);
-                    start = end;
-                }
-            }
-        } else {
-            // consider adding a space + word
-            if cur_len + 1 + word_len <= max_width {
-                current.push(' ');
-                current.push_str(word);
-            } else {
-                // flush current and start new line
-                lines.push(current);
-                current = String::new();
-                if word_len <= max_width {
-                    current.push_str(word);
-                } else {
-                    // break long word into chunks
-                    let mut start = 0;
-                    let chars: Vec<char> = word.chars().collect();
-                    while start < chars.len() {
-                        let end = usize::min(start + max_width, chars.len());
-                        let chunk: String = chars[start..end].iter().collect();
-                        lines.push(chunk);
-                        start = end;
-                    }
-                }
-            }
-        }
-    }
-
-    if !current.is_empty() {
-        lines.push(current);
-    }
-
-    if lines.is_empty() {
-        lines.push(String::new());
-    }
-
-    lines
-}
 
 fn display_card(c: &Card, flipped: bool) {
     let (term_w, _term_h) = size().unwrap_or((80, 24)); // 80x24 fallback

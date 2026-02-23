@@ -273,7 +273,7 @@ pub fn learn_mode(
             };
             // check if typed answer is close enough
             let is_right = (expected.len() as f64 * 0.3_f64)
-                > (string_distance(response.to_string(), expected.clone()) as f64);
+                > (string_distance(response.to_lowercase(), expected.to_lowercase()) as f64);
             if is_right {
                 println!("\n\n✓: {}\n", expected);
             } else {
