@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::hint::black_box;
 use std::path::PathBuf;
 
-fn generate_confusions(cards: &mut Vec<Card>, rng: &mut ThreadRng) -> Vec<(i64, i64)> {
+fn generate_confusions(cards: &mut [Card], rng: &mut ThreadRng) -> Vec<(i64, i64)> {
     // assign deterministic fake ids (1..N) so mistaken_card_id values can match
     for (i, card) in cards.iter_mut().enumerate() {
         card.id = Some(i as i64 + 1);
@@ -26,7 +26,7 @@ fn generate_confusions(cards: &mut Vec<Card>, rng: &mut ThreadRng) -> Vec<(i64, 
         *conf_map.entry(mistaken_id).or_insert(0) += count;
     }
     // converts to Vec<(i64, i64)>
-    return conf_map.into_iter().collect();
+    conf_map.into_iter().collect()
 }
 
 // measure the time to generate choices for each card once
