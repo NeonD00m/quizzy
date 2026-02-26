@@ -28,28 +28,32 @@ jobs:
       - name: Build (release)
         run: cargo build --release --verbose
 
-      - name: Package artifact
+      - name: Package artifact (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release
+          Copy-Item -Path target/release/quizzy.exe -Destination "release/quizzy.exe"
+          Compress-Archive -Path "release/*" -DestinationPath "quizzy-${{ github.ref_name }}-${{ matrix.os }}.zip"
+
+      - name: Package artifact (Unix)
+        if: matrix.os != 'windows-latest'
         run: |
           mkdir -p release
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            # Windows step runs in PowerShell on the windows runner
-            powershell -Command "Copy-Item -Path target\\release\\quizzy.exe -Destination release\\quizzy-${{ github.ref_name }}-windows-x86_64.exe"
-            powershell -Command "Compress-Archive -Path release\\* -DestinationPath quizzy-${{ github.ref_name }}-windows-x86_64.zip"
-          else
-            cp target/release/quizzy release/quizzy-${{ github.ref_name }}-${{ matrix.os }}
-            zip -j quizzy-${{ github.ref_name }}-${{ matrix.os }}.zip release/*
-          fi
+          cp target/release/quizzy release/quizzy
+          zip -j "quizzy-${{ github.ref_name }}-${{ matrix.os }}.zip" release/*
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: quizzy-${{ matrix.os }}
-          path: |
-            quizzy-${{ github.ref_name }}-${{ matrix.os }}.zip
+          path: quizzy-${{ github.ref_name }}-${{ matrix.os }}.zip
 
   publish:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4
@@ -57,17 +61,9 @@ jobs:
           path: artifacts
 
       - name: Create GitHub Release
-        id: create_release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
+          files: artifacts/**/*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload release assets
-        uses: actions/upload-release-asset@v1
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: artifacts
-          asset_name: quizzy-artifacts-${{ github.ref_name }}.zip
-          asset_content_type: application/zip
