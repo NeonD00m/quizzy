@@ -3,33 +3,71 @@ name: Build and release
 on:
   push:
     tags:
-      - "v*.*.*" # run on semver tags like v0.1.0
+      - "v*.*.*" # e.g. v0.1.0
+  workflow_dispatch: {} # allow manual runs from Actions UI
+  release:
+    types: [published] # run when a GitHub Release is published
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        target:
-          [x86_64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-gnu]
+        os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Install Rust
         uses: actions-rs/toolchain@v1
         with:
-          profile: minimal
           toolchain: stable
           override: true
 
-      - name: Build release
+      - name: Build (release)
+        run: cargo build --release --verbose
+
+      - name: Package artifact
         run: |
-          rustup target add ${{ matrix.target }} || true
-          cargo build --release --target ${{ matrix.target }}
+          mkdir -p release
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            # Windows step runs in PowerShell on the windows runner
+            powershell -Command "Copy-Item -Path target\\release\\quizzy.exe -Destination release\\quizzy-${{ github.ref_name }}-windows-x86_64.exe"
+            powershell -Command "Compress-Archive -Path release\\* -DestinationPath quizzy-${{ github.ref_name }}-windows-x86_64.zip"
+          else
+            cp target/release/quizzy release/quizzy-${{ github.ref_name }}-${{ matrix.os }}
+            zip -j quizzy-${{ github.ref_name }}-${{ matrix.os }}.zip release/*
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: quizzy-${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/quizzy${{ matrix.target == 'x86_64-pc-windows-gnu' && '.exe' || '' }}
+          name: quizzy-${{ matrix.os }}
+          path: |
+            quizzy-${{ github.ref_name }}-${{ matrix.os }}.zip
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload release assets
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: artifacts
+          asset_name: quizzy-artifacts-${{ github.ref_name }}.zip
+          asset_content_type: application/zip
