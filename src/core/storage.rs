@@ -8,6 +8,8 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+pub type SessionDelta = (i64, i64, i64, Option<crate::core::learn::SM2Stats>);
+
 // make learnings core constants for correct and incorrect answers
 const CORRECT_ANSWER_SCORE: i64 = 3;
 const INCORRECT_ANSWER_SCORE: i64 = 1;
@@ -149,16 +151,9 @@ impl Storage {
 
     /// Parse a failed session file created by `write_failed_session_file`.
     /// Format expected: each line `card_id,corrects,incorrects,sm2_json`
-    pub fn read_failed_session_file(
-        &self,
-        path: &std::path::Path,
-    ) -> Result<Vec<(i64, i64, i64, Option<crate::core::learn::SM2Stats>)>> {
-        let s = std::fs::read_to_string(path).with_context(|| {
-            format!(
-                "Failed to read failed session file {}.",
-                path.display()
-            )
-        })?;
+    pub fn read_failed_session_file(&self, path: &std::path::Path) -> Result<Vec<SessionDelta>> {
+        let s = std::fs::read_to_string(path)
+            .with_context(|| format!("Failed to read failed session file {}.", path.display()))?;
         let mut out = Vec::new();
         for (line_number, line) in s.lines().enumerate() {
             let line = line.trim();
@@ -647,7 +642,7 @@ impl Storage {
     }
 
     /// Get current SM-2 stats for a card.
-    pub fn get_card_sm2_stats(&self, card_id: i64) -> Result<crate::core::learn::SM2Stats> {
+    pub fn _get_card_sm2_stats(&self, card_id: i64) -> Result<crate::core::learn::SM2Stats> {
         use crate::core::learn::SM2Stats;
         self.conn
             .query_row(
@@ -784,10 +779,18 @@ pub fn init_db(conn: &Connection) -> Result<()> {
 
         if has_col.is_none() {
             let sql = match col {
-                "interval" => "ALTER TABLE card_stats ADD COLUMN interval INTEGER NOT NULL DEFAULT 0",
-                "repetitions" => "ALTER TABLE card_stats ADD COLUMN repetitions INTEGER NOT NULL DEFAULT 0",
-                "easiness_factor" => "ALTER TABLE card_stats ADD COLUMN easiness_factor REAL NOT NULL DEFAULT 2.5",
-                "next_due" => "ALTER TABLE card_stats ADD COLUMN next_due INTEGER NOT NULL DEFAULT 0",
+                "interval" => {
+                    "ALTER TABLE card_stats ADD COLUMN interval INTEGER NOT NULL DEFAULT 0"
+                }
+                "repetitions" => {
+                    "ALTER TABLE card_stats ADD COLUMN repetitions INTEGER NOT NULL DEFAULT 0"
+                }
+                "easiness_factor" => {
+                    "ALTER TABLE card_stats ADD COLUMN easiness_factor REAL NOT NULL DEFAULT 2.5"
+                }
+                "next_due" => {
+                    "ALTER TABLE card_stats ADD COLUMN next_due INTEGER NOT NULL DEFAULT 0"
+                }
                 _ => continue,
             };
             conn.execute(sql, [])

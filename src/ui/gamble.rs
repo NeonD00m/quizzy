@@ -2,8 +2,8 @@ use crate::core::learn::get_multiple_choice_for_card;
 use crate::core::{deck::*, storage::Storage};
 use crate::ui::learn::display_multiple_choice;
 use crate::ui::{
-    wrap_text,
     input::{RoundAction, enter_input, read_input_with_fuse},
+    wrap_text,
 };
 use anyhow::Context;
 use crossterm::{event::KeyCode, terminal::size};

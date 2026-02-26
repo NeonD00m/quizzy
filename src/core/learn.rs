@@ -31,7 +31,7 @@ impl Default for SM2Stats {
 
 /// Calculate the next interval and stats for a card based on SM-2 algorithm.
 /// `quality` is a value from 0 to 5.
-pub fn calculate_sm2(stats: SM2Stats, quality: u8) -> (SM2Stats, i64) {
+pub fn _calculate_sm2(stats: SM2Stats, quality: u8) -> (SM2Stats, i64) {
     let mut n = stats.repetitions;
     let mut ef = stats.easiness_factor;
     let mut i = stats.interval;
@@ -50,7 +50,8 @@ pub fn calculate_sm2(stats: SM2Stats, quality: u8) -> (SM2Stats, i64) {
         i = 1;
     }
 
-    ef = ef + (0.1 - (5.0 - quality as f64) * (0.08 + (5.0 - quality as f64) * 0.02));
+    // ef = ef + (0.1 - (5.0 - quality as f64) * (0.08 + (5.0 - quality as f64) * 0.02));
+    ef += 0.1 - (5.0 - quality as f64) * (0.08 + (5.0 - quality as f64) * 0.02);
     if ef < 1.3 {
         ef = 1.3;
     }
@@ -241,7 +242,9 @@ pub fn commit_session_with_retries(
 
 /// Write failed session deltas to a timestamped local file next to the DB
 /// failed session file format: each line  = "card_id,corrects,incorrects,sm2_json\n"
-pub fn write_failed_session_file(updates: &[(i64, i64, i64, Option<SM2Stats>)]) -> anyhow::Result<PathBuf> {
+pub fn write_failed_session_file(
+    updates: &[(i64, i64, i64, Option<SM2Stats>)],
+) -> anyhow::Result<PathBuf> {
     // Use storage's db path helper to find the DB directory (stores next to DB).
     let mut path = db_path_from_env_or_default();
     let parent = path
