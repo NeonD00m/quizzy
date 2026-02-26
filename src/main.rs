@@ -92,7 +92,15 @@ pub enum Command {
         deck: String,
     },
     Stats {
-        deck: String,
+        deck: Option<String>,
+
+        /// Page size
+        #[arg(short, long, default_value_t = 10)]
+        size: u32,
+
+        /// Page size
+        #[arg(short, long, default_value_t = 0)]
+        page: u32,
     },
 }
 
@@ -315,8 +323,13 @@ fn main() -> anyhow::Result<()> {
             }
             Ok(())
         }
-        Command::Stats { deck } => {
-            todo!("stats for deck {}", deck);
+        Command::Stats { deck, size, page } => {
+            todo!(
+                "stats for deck {}, page {} of 99, {} rows per page",
+                deck.unwrap_or(String::from("none")),
+                page,
+                size
+            );
         }
     }
 }

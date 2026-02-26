@@ -2,6 +2,7 @@ pub mod cards;
 pub mod gamble;
 pub mod input;
 pub mod learn;
+pub mod stats;
 
 pub fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
     if max_width == 0 {
