@@ -13,7 +13,7 @@ criterion = "0.8"
 [dependencies]
 clap = { version = "4.5.51", features = ["derive"] } # for clapping
 rand = "0.8" # for rand'ing
-rusqlite = "0.38.0" # for storage of stats and sets
+rusqlite = { version = "0.38.0", features = ["bundled"] } # for storage of stats and sets
 serde = { version = "1", features = ["derive"] } # for serde'ing
 chrono = { version = "0.4", features = ["serde"] } # would be cool to use for spaced repetition
 crossterm = "0.29.0" # nicer input handling when it works
