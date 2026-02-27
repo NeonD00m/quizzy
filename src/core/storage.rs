@@ -8,6 +8,24 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+pub struct DeckStatsSummary {
+    pub total_cards: i64,
+    pub new_count: i64,
+    pub learning_count: i64,
+    pub mature_count: i64,
+    pub average_easiness: f64,
+}
+
+pub struct CardStatRow {
+    pub card_id: i64,
+    pub term: String,
+    pub definition: String,
+    pub learning_score: i64,
+    pub interval: i64,
+    pub easiness: f64,
+    pub next_due: i64,
+}
+
 pub type SessionDelta = (i64, i64, i64, Option<crate::core::learn::SM2Stats>);
 
 // make learnings core constants for correct and incorrect answers
@@ -52,6 +70,7 @@ CREATE TABLE IF NOT EXISTS card_stats (
 );
 
 CREATE INDEX IF NOT EXISTS idx_card_stats_learning_score ON card_stats(learning_score);
+CREATE INDEX IF NOT EXISTS idx_card_stats_next_due ON card_stats(next_due);
 
 CREATE TABLE IF NOT EXISTS deck_stats (
     deck_id INTEGER PRIMARY KEY REFERENCES decks(id) ON DELETE CASCADE,
@@ -726,6 +745,106 @@ impl Storage {
                 r.get(0)
             })
             .context("Failed to query user streak.")
+    }
+
+    /// Return count of cards in a deck.
+    pub fn get_deck_card_count(&self, deck_id: i64) -> Result<i64> {
+        self.conn
+            .query_row(
+                "SELECT count(*) FROM cards WHERE deck_id = ?1",
+                params![deck_id],
+                |r| r.get(0),
+            )
+            .context("Failed to count cards in deck.")
+    }
+
+    /// Summarize stats for a deck: New (0 reps), Learning (1-6 interval), Mature (>=7 interval).
+    pub fn get_deck_stats_summary(&self, deck_id: i64) -> Result<DeckStatsSummary> {
+        self.conn
+            .query_row(
+                "SELECT 
+                    COUNT(*),
+                    SUM(CASE WHEN s.repetitions = 0 THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN s.repetitions > 0 AND s.interval < 7 THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN s.interval >= 7 THEN 1 ELSE 0 END),
+                    AVG(s.easiness_factor)
+                 FROM cards c
+                 JOIN card_stats s ON c.id = s.card_id
+                 WHERE c.deck_id = ?1",
+                params![deck_id],
+                |r| {
+                    Ok(DeckStatsSummary {
+                        total_cards: r.get(0)?,
+                        new_count: r.get::<_, Option<i64>>(1)?.unwrap_or(0),
+                        learning_count: r.get::<_, Option<i64>>(2)?.unwrap_or(0),
+                        mature_count: r.get::<_, Option<i64>>(3)?.unwrap_or(0),
+                        average_easiness: r.get::<_, Option<f64>>(4)?.unwrap_or(2.5),
+                    })
+                },
+            )
+            .context("Failed to aggregate deck stats.")
+    }
+
+    /// Return paginated card stats for a deck.
+    pub fn get_cards_paginated(
+        &self,
+        deck_id: i64,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<CardStatRow>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT c.id, c.term, c.definition, s.learning_score, s.interval, s.easiness_factor, s.next_due
+                 FROM cards c
+                 JOIN card_stats s ON c.id = s.card_id
+                 WHERE c.deck_id = ?1
+                 ORDER BY c.id
+                 LIMIT ?2 OFFSET ?3",
+            )
+            .context("Failed to prepare get_cards_paginated statement.")?;
+
+        let rows = stmt
+            .query_map(params![deck_id, limit, offset], |r| {
+                Ok(CardStatRow {
+                    card_id: r.get(0)?,
+                    term: r.get(1)?,
+                    definition: r.get(2)?,
+                    learning_score: r.get(3)?,
+                    interval: r.get(4)?,
+                    easiness: r.get(5)?,
+                    next_due: r.get(6)?,
+                })
+            })
+            .context("Failed to query paginated cards.")?;
+
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.context("Failed mapping card row.")?);
+        }
+        Ok(out)
+    }
+
+    /// Top N "leech" cards: those with the most incorrect answers for a deck.
+    pub fn get_leech_cards(&self, deck_id: i64, limit: u32) -> Result<Vec<(String, i64)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT c.term, s.incorrect_count
+             FROM cards c
+             JOIN card_stats s ON c.id = s.card_id
+             WHERE c.deck_id = ?1 AND s.incorrect_count > 0
+             ORDER BY s.incorrect_count DESC
+             LIMIT ?2"
+        ).context("Failed to prepare get_leech_cards statement.")?;
+
+        let rows = stmt
+            .query_map(params![deck_id, limit], |r| Ok((r.get(0)?, r.get(1)?)))
+            .context("Failed to query leech cards.")?;
+
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.context("Failed mapping leech card row.")?);
+        }
+        Ok(out)
     }
 }
 
