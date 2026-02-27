@@ -6,6 +6,7 @@ use crossterm::{
 };
 use std::io::{Write, stdout};
 use std::time::{Duration, Instant};
+use url::form_urlencoded::Parse;
 
 // super smart data structure to prevent program crash
 // from leaving terminal in raw mode (and breaking it)
@@ -245,6 +246,89 @@ pub fn type_input(prefix: &str) -> anyhow::Result<Option<String>> {
                     return Ok(None);
                 }
                 KeyCode::Char(c) => input_buffer.push(c),
+                _ => {}
+            };
+        }
+        stdout.queue(cursor::MoveUp(1))?;
+    }
+}
+
+pub enum StatsInput {
+    Exit,
+    Back,
+    Index(u32),
+    Up,
+    Down,
+}
+
+/// KeyCode::Esc signals quit, KeyCode::BackTab signals to go back
+pub fn stats_input(prefix: &str) -> anyhow::Result<StatsInput> {
+    let input_prefix = format!("{}> ", prefix);
+    let mut stdout = stdout();
+    let mut input_buffer: u32 = 0;
+    let mut typed: u8 = 0;
+
+    // drain input buffer before starting loop
+    while event::poll(Duration::from_millis(0))? {
+        event::read()?;
+    }
+
+    let _guard = RawModeGuard::new();
+    stdout.execute(cursor::Show)?;
+    loop {
+        // RENDER INPUT LINE
+        stdout
+            .queue(cursor::MoveDown(1))?
+            .queue(cursor::MoveToColumn(0))?
+            .queue(Clear(ClearType::CurrentLine))?
+            .queue(Print(&input_prefix))?
+            .queue(Print(&input_buffer))?
+            .flush()?;
+
+        // NON-BLOCKING INPUT
+        if event::poll(Duration::from_millis(50))?
+            && let Event::Key(key) = event::read()?
+            && key.kind == KeyEventKind::Press
+        {
+            if key.modifiers == KeyModifiers::CONTROL
+                && (key.code == KeyCode::Char('c') || key.code == KeyCode::Char('d'))
+            {
+                return Ok(StatsInput::Exit);
+            }
+
+            match key.code {
+                KeyCode::Up => {
+                    return Ok(StatsInput::Up);
+                }
+                KeyCode::Down => {
+                    return Ok(StatsInput::Down);
+                }
+                KeyCode::Backspace => {
+                    input_buffer /= 10;
+                    if typed > 0 {
+                        typed -= 1;
+                    }
+                }
+                KeyCode::Enter => {
+                    if typed > 0 {
+                        stdout.execute(cursor::MoveUp(1))?;
+                        return Ok(StatsInput::Index(input_buffer));
+                    }
+                }
+                KeyCode::Esc => {
+                    stdout.execute(cursor::MoveUp(1))?;
+                    return Ok(StatsInput::Back);
+                }
+                KeyCode::Char(c) => {
+                    // only allow typing numbers 0-9 for indices
+                    match c.to_digit(10) {
+                        Some(d) => {
+                            input_buffer = input_buffer * 10 + d;
+                            typed += 1;
+                        }
+                        _ => {}
+                    };
+                }
                 _ => {}
             };
         }
