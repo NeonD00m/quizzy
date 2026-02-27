@@ -1,9 +1,9 @@
 use crate::core::learn::get_multiple_choice_for_card;
 use crate::core::{deck::*, storage::Storage};
-use crate::ui::learn::display_multiple_choice;
 use crate::ui::{
     input::{RoundAction, enter_input, read_input_with_fuse},
-    wrap_text,
+    learn::display_multiple_choice,
+    print_split_aligned, wrap_text,
 };
 use anyhow::Context;
 use crossterm::{event::KeyCode, terminal::size};
@@ -105,7 +105,8 @@ pub fn gauntlet_mode(deck: Deck, storage: &mut Storage) -> anyhow::Result<()> {
             display_card(card, false);
             let mut bet = gauntlet_reward(current_streak);
             let mut is_doubled = false;
-            println!("What's on the other side?\t\tBet: ${}", bet);
+            let bet_info = format!("Bet: ${}", bet);
+            print_split_aligned("What's on the other side?", &bet_info, Some(60));
             let choices = get_multiple_choice_for_card(card, &cards, &mut rng, false, None);
             display_multiple_choice(&choices, true);
 
@@ -170,7 +171,9 @@ pub fn gauntlet_mode(deck: Deck, storage: &mut Storage) -> anyhow::Result<()> {
                         // timer resets when you double, should I change that?
                         bet *= 2;
                         is_doubled = true;
-                        println!("DOUBLE DOWN ACTIVATED! RESET TIMER. Bet: ${}", bet);
+                        println!("DOUBLE DOWN ACTIVATED! RESET TIMER.");
+                        let bet_info = format!("Bet: ${}", bet);
+                        print_split_aligned("What's on the other side?", &bet_info, Some(60));
                         stdout().flush().context("Failed to flush output")?;
                     }
                     RoundAction::Exit => {

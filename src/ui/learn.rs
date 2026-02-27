@@ -2,8 +2,10 @@ use crate::core::deck::*;
 use crate::core::learn::*;
 use crate::core::storage::Storage;
 use crate::core::string_distance::string_distance;
-use crate::ui::input::type_input;
-use crate::ui::input::{choice_input, enter_input};
+use crate::ui::{
+    input::{choice_input, enter_input, type_input},
+    print_split_aligned,
+};
 use anyhow::Context;
 use core::f64;
 use crossterm::event::KeyCode;
@@ -300,13 +302,15 @@ pub fn learn_mode(
             )
         };
 
+        println!();
+        let q_info = format!("({i}/{questions})");
         if ask_term {
-            println!("\nTerm: {}\t\t\t({i}/{questions})", c.term);
+            print_split_aligned(&format!("Term: {}", c.term), &q_info, Some(60));
         } else {
-            println!("\nDefinition: {}\t\t\t({i}/{questions})", c.definition);
+            print_split_aligned(&format!("Definition: {}", c.definition), &q_info, Some(60));
         }
+
         if ask_written {
-            // TODO: rewrite to use raw mode with input buffer
             let response = if let Some(str) = type_input("Type the answer of [ESC] ")? {
                 str
             } else {
