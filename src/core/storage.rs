@@ -29,7 +29,7 @@ pub struct CardStatRow {
 
 pub type SessionDelta = (i64, i64, i64, Option<crate::core::learn::SM2Stats>);
 
-// make learnings core constants for correct and incorrect answers
+// make learning score constants for correct and incorrect answers
 const CORRECT_ANSWER_SCORE: i64 = 3;
 const INCORRECT_ANSWER_SCORE: i64 = 1;
 

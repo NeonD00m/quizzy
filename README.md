@@ -9,7 +9,7 @@ A terminal-first, Quizlet-like flashcard tool written in Rust. Import decks (Qui
 Why Quizzy?
 - Local-first: your decks and learning stats stay on your machine.
 - Multiple study modes: quick flashcards, an adaptive "learn" quiz mode, and a playful gamble/gauntlet mode.
-- Lightweight CLI written in Rust — good for learning and sharing reproducible builds.
+- Lightweight CLI written in Rust - good for learning and reducing bloat during when you have to be locked in.
 
 Features
 - Import from Quizlet JSON (helper included) or load TSV/CSV/JSON text files.

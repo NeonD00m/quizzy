@@ -174,7 +174,7 @@ pub fn get_multiple_choice_for_card(
         // sort ascending by distance (most similar first)
         candidates.sort_by_key(|(dist, _)| *dist);
 
-        for (_distance, card) in candidates.into_iter().take(4 - chosen.len()) {
+        for (_distance, card) in candidates.into_iter().take(3 - chosen.len()) {
             if !chosen.contains(&card) {
                 chosen.push(card);
             }

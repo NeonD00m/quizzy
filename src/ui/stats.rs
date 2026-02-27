@@ -53,7 +53,7 @@ pub fn stats_mode(
             });
         }
     } else {
-        stack.push(StatsViewState::Overview { page: page });
+        stack.push(StatsViewState::Overview { page });
     }
 
     println!("\nNavigation: Down/Up (Pages) | Enter/Index (Select) | Esc (Back) | q (Exit)");

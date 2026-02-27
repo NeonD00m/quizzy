@@ -87,6 +87,7 @@ pub fn gauntlet_mode(deck: Deck, storage: &mut Storage) -> anyhow::Result<()> {
         println!("----------------------------------------");
         print!("Press [ENTER] to deal the first card or [ESC] to cancel > ");
         stdout().flush().context("Failed to flush output.")?;
+        let mut successes = 0;
         let prompt = enter_input();
         if prompt? == KeyCode::Esc {
             println!("\nEnded Gauntlet session.");
@@ -101,7 +102,7 @@ pub fn gauntlet_mode(deck: Deck, storage: &mut Storage) -> anyhow::Result<()> {
             let card = &cards.get(index).context("Expected card for index.")?;
 
             // DISPLAY CARD AND OPTIONS
-            println!();
+            println!("\n");
             display_card(card, false);
             let mut bet = gauntlet_reward(current_streak);
             let mut is_doubled = false;
@@ -112,7 +113,7 @@ pub fn gauntlet_mode(deck: Deck, storage: &mut Storage) -> anyhow::Result<()> {
 
             // START THE INPUT LOOP
             let now = Instant::now();
-            let mut time_allowed = std::cmp::max(10, 20 - current_streak) as f64;
+            let mut time_allowed = std::cmp::max(5, 12 - current_streak) as f64;
             'input: loop {
                 let result = read_input_with_fuse(
                     time_allowed as u64,
@@ -142,6 +143,7 @@ pub fn gauntlet_mode(deck: Deck, storage: &mut Storage) -> anyhow::Result<()> {
                             storage.update_currency(bet)?;
                             storage.update_streak(1)?;
                             current_streak += 1;
+                            successes += 1;
                             break 'input;
                         } else {
                             println!("\n\nX Wrong! Answer was: {}", card.definition);
@@ -158,20 +160,18 @@ pub fn gauntlet_mode(deck: Deck, storage: &mut Storage) -> anyhow::Result<()> {
                         break 'streak;
                     }
                     RoundAction::Double => {
+                        time_allowed -= now.elapsed().as_secs_f64();
                         if is_doubled {
-                            println!("ALREADY DOUBLED DOWN. RESUMING TIMER.");
-                            time_allowed -= now.elapsed().as_secs_f64();
+                            println!("ALREADY DOUBLED DOWN.");
                             continue 'input;
                         }
                         if balance < 2 * bet {
-                            println!("NOT ENOUGH BALANCE TO DOUBLE DOWN. RESUMING TIMER.");
-                            time_allowed -= now.elapsed().as_secs_f64();
+                            println!("NOT ENOUGH BALANCE TO DOUBLE DOWN.");
                             continue 'input;
                         }
-                        // timer resets when you double, should I change that?
                         bet *= 2;
                         is_doubled = true;
-                        println!("DOUBLE DOWN ACTIVATED! RESET TIMER.");
+                        println!("DOUBLE DOWN ACTIVATED!");
                         let bet_info = format!("Bet: ${}", bet);
                         print_split_aligned("What's on the other side?", &bet_info, Some(60));
                         stdout().flush().context("Failed to flush output")?;
@@ -187,10 +187,7 @@ pub fn gauntlet_mode(deck: Deck, storage: &mut Storage) -> anyhow::Result<()> {
             // pause before next round so they can see the result and rest a second
             std::thread::sleep(Duration::from_secs(2));
         }
-        print!(
-            "Session ended with {} successful answers! > ",
-            current_streak
-        );
+        print!("Session ended with {} successful answers! > ", successes);
         stdout().flush().context("Failed to flush output.")?;
         enter_input()?;
     }
