@@ -17,6 +17,7 @@ pub struct DeckStatsSummary {
 }
 
 pub struct CardStatRow {
+    #[allow(dead_code)]
     pub card_id: i64,
     pub term: String,
     pub definition: String,
@@ -762,7 +763,7 @@ impl Storage {
     pub fn get_deck_stats_summary(&self, deck_id: i64) -> Result<DeckStatsSummary> {
         self.conn
             .query_row(
-                "SELECT 
+                "SELECT
                     COUNT(*),
                     SUM(CASE WHEN s.repetitions = 0 THEN 1 ELSE 0 END),
                     SUM(CASE WHEN s.repetitions > 0 AND s.interval < 7 THEN 1 ELSE 0 END),

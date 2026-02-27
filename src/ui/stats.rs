@@ -33,19 +33,27 @@ fn truncate(s: &str, max_len: usize) -> String {
 pub fn stats_mode(
     deck_option: Option<Deck>,
     size: u32,
-    _page: u32,
+    page: u32,
     storage: &mut Storage,
 ) -> anyhow::Result<()> {
     let mut stack = Vec::new();
 
     // Initialize the stack based on whether a deck was provided
     if let Some(deck) = deck_option {
-        stack.push(StatsViewState::DeckCategory {
-            deck_id: deck.id.unwrap_or(0),
-            deck_name: deck.name,
-        });
+        if page > 0 {
+            stack.push(StatsViewState::DeckByCard {
+                deck_id: deck.id.unwrap_or(0),
+                deck_name: deck.name,
+                page: page - 1,
+            });
+        } else {
+            stack.push(StatsViewState::DeckCategory {
+                deck_id: deck.id.unwrap_or(0),
+                deck_name: deck.name.clone(),
+            });
+        }
     } else {
-        stack.push(StatsViewState::Overview { page: 0 });
+        stack.push(StatsViewState::Overview { page: page });
     }
 
     println!("\nNavigation: Down/Up (Pages) | Enter/Index (Select) | Esc (Back) | q (Exit)");
@@ -56,6 +64,7 @@ pub fn stats_mode(
                 let decks = storage.list_decks()?;
                 let total_decks = decks.len();
                 let total_pages = (total_decks as f32 / size as f32).ceil() as u32;
+                let page = min(page, total_pages - 1);
                 let start = (page * size) as usize;
                 let end = min(start + size as usize, total_decks);
 
@@ -196,30 +205,39 @@ pub fn stats_mode(
                 let total_pages = (total_cards as f32 / size as f32).ceil() as u32;
                 let cards = storage.get_cards_paginated(deck_id, limit, offset)?;
 
-                                let mut table = Table::new();
-                                table
-                                    .load_preset(UTF8_FULL)
-                                    .apply_modifier(UTF8_ROUND_CORNERS)
-                                    .set_content_arrangement(ContentArrangement::Dynamic)
-                                    .set_header(vec!["Term", "Definition", "Score", "Interval", "EF", "Next Due"]);
-                
-                                for c in cards {
-                                    let due_str = if c.next_due == 0 {
-                                        "Now".to_string()
-                                    } else {
-                                        Utc.timestamp_opt(c.next_due, 0).unwrap().format("%Y-%m-%d").to_string()
-                                    };
-                
-                                    table.add_row(vec![
-                                        truncate(&c.term, 20),
-                                        truncate(&c.definition, 30),
-                                        c.learning_score.to_string(),
-                                        format!("{}d", c.interval),
-                                        format!("{:.2}", c.easiness),
-                                        due_str,
-                                    ]);
-                                }
-                
+                let mut table = Table::new();
+                table
+                    .load_preset(UTF8_FULL)
+                    .apply_modifier(UTF8_ROUND_CORNERS)
+                    .set_content_arrangement(ContentArrangement::Dynamic)
+                    .set_header(vec![
+                        "Term",
+                        "Definition",
+                        "Score",
+                        "Interval",
+                        "EF",
+                        "Next Due",
+                    ]);
+
+                for c in cards {
+                    let due_str = if c.next_due == 0 {
+                        "Now".to_string()
+                    } else {
+                        Utc.timestamp_opt(c.next_due, 0)
+                            .unwrap()
+                            .format("%Y-%m-%d")
+                            .to_string()
+                    };
+
+                    table.add_row(vec![
+                        truncate(&c.term, 20),
+                        truncate(&c.definition, 30),
+                        c.learning_score.to_string(),
+                        format!("{}d", c.interval),
+                        format!("{:.2}", c.easiness),
+                        due_str,
+                    ]);
+                }
 
                 println!(
                     "\n--- {}: Cards (Page {}/{}) ---\n{}",
