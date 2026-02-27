@@ -827,14 +827,17 @@ impl Storage {
 
     /// Top N "leech" cards: those with the most incorrect answers for a deck.
     pub fn get_leech_cards(&self, deck_id: i64, limit: u32) -> Result<Vec<(String, i64)>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT c.term, s.incorrect_count
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT c.term, s.incorrect_count
              FROM cards c
              JOIN card_stats s ON c.id = s.card_id
              WHERE c.deck_id = ?1 AND s.incorrect_count > 0
              ORDER BY s.incorrect_count DESC
-             LIMIT ?2"
-        ).context("Failed to prepare get_leech_cards statement.")?;
+             LIMIT ?2",
+            )
+            .context("Failed to prepare get_leech_cards statement.")?;
 
         let rows = stmt
             .query_map(params![deck_id, limit], |r| Ok((r.get(0)?, r.get(1)?)))

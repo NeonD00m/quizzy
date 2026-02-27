@@ -1,192 +1,264 @@
 use crate::core::deck::*;
 use crate::core::storage::Storage;
 use crate::ui::input::{StatsInput, stats_input};
-use comfy_table::{
-    Cell, CellAlignment, ContentArrangement, Table, modifiers::UTF8_ROUND_CORNERS,
-    presets::UTF8_FULL,
-};
+use chrono::{TimeZone, Utc};
+use comfy_table::{ContentArrangement, Table, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL};
 use std::cmp::min;
 
-type StatsPage = (Option<Deck>, Option<i32>, u32);
-
-/// View the statistics of a specific card, maybe even timeframe?
-fn card_stats(deck: &Deck, index: i32, storage: &mut Storage) -> anyhow::Result<()> {
-    // should I even implement this?
-    Ok(())
+#[derive(Clone)]
+enum StatsViewState {
+    Overview {
+        page: u32,
+    },
+    DeckCategory {
+        deck_id: i64,
+        deck_name: String,
+    },
+    DeckByCard {
+        deck_id: i64,
+        deck_name: String,
+        page: u32,
+    },
 }
 
-/// View the overview of a deck's stats, with detailed statistics per card
-fn deck_by_card(deck: &Deck, size: u32, page: u32, storage: &mut Storage) -> anyhow::Result<bool> {
-    // get all cards from this deck or use special storage method?
-    // rows: Learned, Learning, Reviewing, Unlearned
-    // columns: category, count, truncated card terms
-    let mut p = page;
-    let total_pages = 1;
-    let mut table = Table::new();
-    table
-        .load_preset(UTF8_FULL)
-        .apply_modifier(UTF8_ROUND_CORNERS)
-        .set_content_arrangement(ContentArrangement::Dynamic)
-        .set_header(vec!["Index", "Term", "Learning Score"]); // add other stats in the future
-
-    'main: loop {
-        let mut ptable = table.clone();
-        for i in 0..size {
-            ptable.add_row(vec![
-                i.to_string().as_str(),
-                "TERM HERE",
-                23.to_string().as_str(),
-            ]);
-        }
-        println!(
-            "{}:\t\t\tPage {} of {}\n{}",
-            deck.name, p, total_pages, table
-        );
-
-        'input: loop {
-            match stats_input(
-                "Use arrows to move through pages or type an index to view a particular card ",
-            )? {
-                StatsInput::Up => p = min(p + 1, total_pages),
-                StatsInput::Down => p = p.saturating_sub(1),
-                StatsInput::Index(n) => {
-                    if false {
-                        card_stats(deck, n as i32, storage)?;
-                    }
-                    break 'input;
-                }
-                StatsInput::Exit => return Ok(true),
-                _ => break 'main,
-            }
-        }
+fn truncate(s: &str, max_len: usize) -> String {
+    if s.chars().count() > max_len {
+        let truncated: String = s.chars().take(max_len - 3).collect();
+        format!("{}...", truncated)
+    } else {
+        s.to_string()
     }
-    Ok(false)
 }
 
-/// View the overview of a deck's stats, cards organized by learning progress
-fn deck_by_category(deck: Deck, size: u32, storage: &mut Storage) -> anyhow::Result<()> {
-    // get all cards from this deck or use special storage method?
-    // rows: Learned, Learning, Reviewing, Unlearned
-    // columns: category, count, truncated card terms
-    let mut table = Table::new();
-    table
-        .load_preset(UTF8_FULL)
-        .apply_modifier(UTF8_ROUND_CORNERS)
-        .set_content_arrangement(ContentArrangement::Dynamic)
-        .set_header(vec!["Progress", "Card Count", "Terms"])
-        .add_row(vec!["Learned", 4.to_string().as_str(), "Hi, Bye, No, Yes"])
-        .add_row(vec!["Learning", 2.to_string().as_str(), "Move, Go"])
-        .add_row(vec![
-            "Need To Review",
-            4.to_string().as_str(),
-            "Hard, Easy, Difficult, Impossible",
-        ])
-        .add_row(vec!["Unlearned", 1.to_string().as_str(), "Never"]);
-
-    let decks = vec![
-        Deck::named(String::from("Learned")),
-        Deck::named(String::from("Learning")),
-        Deck::named(String::from("Need To Review")),
-        Deck::named(String::from("Unlearned")),
-    ];
-
-    'main: loop {
-        println!("{} by category:\n{}", deck.name, table);
-
-        'input: loop {
-            match stats_input(
-                "Use down arrow to view the deck card-by-card or type an index for just that section ",
-            )? {
-                StatsInput::Down => {
-                    deck_by_card(&deck, size, 0, storage)?;
-                    break 'input;
-                }
-                StatsInput::Up => {}
-                StatsInput::Index(n) => {
-                    // construct a Deck with only the cards from this category
-                    if let Some(section) = decks.get(n as usize) {
-                        deck_by_card(&section, size, 0, storage)?;
-                        break 'input;
-                    } else {
-                        println!("Section doesn't exist!");
-                    }
-                }
-                _ => break 'main,
-            }
-        }
-    }
-    Ok(())
-}
-
-/// View general numbers of all saved decks
-fn overview(size: u32, page: u32, storage: &mut Storage) -> anyhow::Result<()> {
-    let mut p = page;
-    let total_pages = 1;
-    let decks = storage.list_decks()?;
-
-    let mut table = Table::new();
-    table
-        .load_preset(UTF8_FULL)
-        .apply_modifier(UTF8_ROUND_CORNERS)
-        .set_content_arrangement(ContentArrangement::Dynamic)
-        .set_header(vec!["Deck Id", "Deck Name", "# Cards", "Terms"]);
-
-    'main: loop {
-        // loop through decks and add rows as needed for page
-        let mut ptable = table.clone();
-        for i in 0..size {
-            ptable.add_row(vec![
-                i.to_string().as_str(),
-                "deck name",
-                23.to_string().as_str(),
-                "Hi, Yes, No, Bye",
-            ]);
-        }
-        println!("All Decks:\t\t\tPage {} of {}\n{}", p, total_pages, table);
-
-        loop {
-            match stats_input(
-                "Use arrows to move through pages or type an index to view a particular deck ",
-            )? {
-                StatsInput::Up => p = min(p + 1, total_pages),
-                StatsInput::Down => p = p.saturating_sub(1),
-                StatsInput::Index(n) => {
-                    if let Some((id, _)) = decks.get(n as usize) {
-                        let deck = storage.get_deck_by_id(*id)?;
-                        deck_by_category(deck, size, storage)?;
-                    } else {
-                        println!("Invalid index {}: no deck found!", n);
-                    }
-                }
-                _ => break 'main,
-            }
-        }
-    }
-    Ok(())
-}
-
-#[allow(dead_code)]
 pub fn stats_mode(
     deck_option: Option<Deck>,
     size: u32,
-    page: u32,
+    _page: u32,
     storage: &mut Storage,
 ) -> anyhow::Result<()> {
-    // if no deck, display overview first for all decks, in order of recently studied
-    // allow user to use the indices to inspect further or esc to "go back"
-    // save page number at each step of the way for back functionality
-    println!(
-        "\nUse the left or right arrows to navigate the pages of a table or press Esc to go back to the previous table."
-    );
+    let mut stack = Vec::new();
 
+    // Initialize the stack based on whether a deck was provided
     if let Some(deck) = deck_option {
-        if page == 0 {
-            deck_by_category(deck, size, storage)?;
-        } else {
-            deck_by_card(&deck, size, page, storage)?;
-        }
+        stack.push(StatsViewState::DeckCategory {
+            deck_id: deck.id.unwrap_or(0),
+            deck_name: deck.name,
+        });
     } else {
-        overview(size, page, storage)?;
+        stack.push(StatsViewState::Overview { page: 0 });
     }
+
+    println!("\nNavigation: Down/Up (Pages) | Enter/Index (Select) | Esc (Back) | q (Exit)");
+
+    while let Some(current_state) = stack.last().cloned() {
+        match current_state {
+            StatsViewState::Overview { page } => {
+                let decks = storage.list_decks()?;
+                let total_decks = decks.len();
+                let total_pages = (total_decks as f32 / size as f32).ceil() as u32;
+                let start = (page * size) as usize;
+                let end = min(start + size as usize, total_decks);
+
+                let mut table = Table::new();
+                table
+                    .load_preset(UTF8_FULL)
+                    .apply_modifier(UTF8_ROUND_CORNERS)
+                    .set_content_arrangement(ContentArrangement::Dynamic)
+                    .set_header(vec!["#", "Deck Name", "Cards", "Last Studied"]);
+
+                for (i, (id, name)) in decks[start..end].iter().enumerate() {
+                    let summary = storage.get_deck_stats_summary(*id)?;
+                    // We need last_studied_at from deck_stats
+                    let last_studied: Option<i64> = storage
+                        .conn
+                        .query_row(
+                            "SELECT last_studied_at FROM deck_stats WHERE deck_id = ?1",
+                            [id],
+                            |r| r.get(0),
+                        )
+                        .ok();
+
+                    let date_str = last_studied
+                        .map(|ts| {
+                            Utc.timestamp_opt(ts, 0)
+                                .unwrap()
+                                .format("%Y-%m-%d")
+                                .to_string()
+                        })
+                        .unwrap_or_else(|| "Never".to_string());
+
+                    table.add_row(vec![
+                        (start + i).to_string(),
+                        name.clone(),
+                        summary.total_cards.to_string(),
+                        date_str,
+                    ]);
+                }
+
+                println!(
+                    "\n--- All Decks (Page {}/{}) ---\n{}",
+                    page + 1,
+                    total_pages.max(1),
+                    table
+                );
+
+                match stats_input("Select a deck index or use arrows to paginate: ")? {
+                    StatsInput::Down if page + 1 < total_pages => {
+                        stack.pop();
+                        stack.push(StatsViewState::Overview { page: page + 1 });
+                    }
+                    StatsInput::Up if page > 0 => {
+                        stack.pop();
+                        stack.push(StatsViewState::Overview { page: page - 1 });
+                    }
+                    StatsInput::Index(n) => {
+                        if let Some((id, name)) = decks.get(n as usize) {
+                            stack.push(StatsViewState::DeckCategory {
+                                deck_id: *id,
+                                deck_name: name.clone(),
+                            });
+                        }
+                    }
+                    StatsInput::Exit => {
+                        println!("\n");
+                        break;
+                    }
+                    StatsInput::Back => {
+                        stack.pop();
+                    }
+                    _ => {}
+                }
+                println!("\n");
+            }
+
+            StatsViewState::DeckCategory { deck_id, deck_name } => {
+                let summary = storage.get_deck_stats_summary(deck_id)?;
+                let leeches = storage.get_leech_cards(deck_id, 5)?;
+
+                let mut table = Table::new();
+                table
+                    .load_preset(UTF8_FULL)
+                    .apply_modifier(UTF8_ROUND_CORNERS)
+                    .set_header(vec!["Status", "Count", "Percentage"]);
+
+                let total = summary.total_cards as f32;
+                let row = |label: &str, count: i64| {
+                    let pct = if total > 0.0 {
+                        (count as f32 / total) * 100.0
+                    } else {
+                        0.0
+                    };
+                    vec![label.to_string(), count.to_string(), format!("{:.1}%", pct)]
+                };
+
+                table.add_row(row("Mature (Interval >= 7d)", summary.mature_count));
+                table.add_row(row("Learning", summary.learning_count));
+                table.add_row(row("New", summary.new_count));
+
+                println!("\n--- Deck: {} ---\n{}", deck_name, table);
+                println!("Average Easiness: {:.2}", summary.average_easiness);
+
+                if !leeches.is_empty() {
+                    println!("\nTop Leech Cards (Most Missed):");
+                    for (term, count) in leeches {
+                        println!(" - {}: {} misses", term, count);
+                    }
+                }
+                println!();
+                match stats_input("[Enter] View Cards | [Esc] Back | [q] Exit: ")? {
+                    StatsInput::Confirm => {
+                        stack.push(StatsViewState::DeckByCard {
+                            deck_id,
+                            deck_name: deck_name.clone(),
+                            page: 0,
+                        });
+                    }
+                    StatsInput::Back => {
+                        stack.pop();
+                    }
+                    StatsInput::Exit => {
+                        println!("\n");
+                        break;
+                    }
+                    _ => {}
+                }
+                println!("\n");
+            }
+
+            StatsViewState::DeckByCard {
+                deck_id,
+                deck_name,
+                page,
+            } => {
+                let limit = size;
+                let offset = page * size;
+                let total_cards = storage.get_deck_card_count(deck_id)?;
+                let total_pages = (total_cards as f32 / size as f32).ceil() as u32;
+                let cards = storage.get_cards_paginated(deck_id, limit, offset)?;
+
+                                let mut table = Table::new();
+                                table
+                                    .load_preset(UTF8_FULL)
+                                    .apply_modifier(UTF8_ROUND_CORNERS)
+                                    .set_content_arrangement(ContentArrangement::Dynamic)
+                                    .set_header(vec!["Term", "Definition", "Score", "Interval", "EF", "Next Due"]);
+                
+                                for c in cards {
+                                    let due_str = if c.next_due == 0 {
+                                        "Now".to_string()
+                                    } else {
+                                        Utc.timestamp_opt(c.next_due, 0).unwrap().format("%Y-%m-%d").to_string()
+                                    };
+                
+                                    table.add_row(vec![
+                                        truncate(&c.term, 20),
+                                        truncate(&c.definition, 30),
+                                        c.learning_score.to_string(),
+                                        format!("{}d", c.interval),
+                                        format!("{:.2}", c.easiness),
+                                        due_str,
+                                    ]);
+                                }
+                
+
+                println!(
+                    "\n--- {}: Cards (Page {}/{}) ---\n{}",
+                    deck_name,
+                    page + 1,
+                    total_pages.max(1),
+                    table
+                );
+
+                match stats_input("Use arrows to paginate | [Esc] Back | [q] Exit: ")? {
+                    StatsInput::Down if page + 1 < total_pages => {
+                        stack.pop();
+                        stack.push(StatsViewState::DeckByCard {
+                            deck_id,
+                            deck_name: deck_name.clone(),
+                            page: page + 1,
+                        });
+                    }
+                    StatsInput::Up if page > 0 => {
+                        stack.pop();
+                        stack.push(StatsViewState::DeckByCard {
+                            deck_id,
+                            deck_name: deck_name.clone(),
+                            page: page - 1,
+                        });
+                    }
+                    StatsInput::Back => {
+                        stack.pop();
+                    }
+                    StatsInput::Exit => {
+                        println!("\n");
+                        break;
+                    }
+                    _ => {}
+                }
+                println!("\n");
+            }
+        }
+    }
+
     Ok(())
 }

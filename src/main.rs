@@ -10,6 +10,7 @@ use crate::core::string_distance::string_distance;
 use crate::ui::cards::cards_mode;
 use crate::ui::gamble::gauntlet_mode;
 use crate::ui::learn::learn_mode;
+use crate::ui::stats::stats_mode;
 use chrono::Utc;
 use std::io::{Write, stdin, stdout};
 
@@ -324,12 +325,12 @@ fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Command::Stats { deck, size, page } => {
-            todo!(
-                "stats for deck {}, page {} of 99, {} rows per page",
-                deck.unwrap_or(String::from("none")),
-                page,
-                size
-            );
+            let deck_option: Option<Deck> = if let Some(name) = deck {
+                get_deck(resolve_deck_source(name.as_str()), &storage).ok()
+            } else {
+                None
+            };
+            stats_mode(deck_option, size, page, &mut storage)
         }
     }
 }
