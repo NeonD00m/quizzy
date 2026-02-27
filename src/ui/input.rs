@@ -293,14 +293,17 @@ pub fn stats_input(prefix: &str) -> anyhow::Result<StatsInput> {
             if key.modifiers == KeyModifiers::CONTROL
                 && (key.code == KeyCode::Char('c') || key.code == KeyCode::Char('d'))
             {
+                stdout.execute(cursor::MoveUp(1))?;
                 return Ok(StatsInput::Exit);
             }
 
             match key.code {
                 KeyCode::Up => {
+                    stdout.execute(cursor::MoveUp(1))?;
                     return Ok(StatsInput::Up);
                 }
                 KeyCode::Down => {
+                    stdout.execute(cursor::MoveUp(1))?;
                     return Ok(StatsInput::Down);
                 }
                 KeyCode::Backspace => {

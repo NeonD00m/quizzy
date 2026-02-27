@@ -10,52 +10,57 @@ use std::cmp::min;
 type StatsPage = (Option<Deck>, Option<i32>, u32);
 
 /// View the statistics of a specific card, maybe even timeframe?
-fn card_stats(deck: Deck, index: i32, storage: &mut Storage) -> anyhow::Result<()> {
+fn card_stats(deck: &Deck, index: i32, storage: &mut Storage) -> anyhow::Result<()> {
     // should I even implement this?
     Ok(())
 }
 
 /// View the overview of a deck's stats, with detailed statistics per card
-fn deck_by_card(deck: &Deck, size: u32, page: u32, storage: &mut Storage) -> anyhow::Result<()> {
+fn deck_by_card(deck: &Deck, size: u32, page: u32, storage: &mut Storage) -> anyhow::Result<bool> {
     // get all cards from this deck or use special storage method?
     // rows: Learned, Learning, Reviewing, Unlearned
     // columns: category, count, truncated card terms
+    let mut p = page;
+    let total_pages = 1;
     let mut table = Table::new();
     table
         .load_preset(UTF8_FULL)
         .apply_modifier(UTF8_ROUND_CORNERS)
         .set_content_arrangement(ContentArrangement::Dynamic)
-        // .set_width(40)
-        .set_header(vec!["Index", "Term", "Learning Score"])
-        .add_row(vec![
-            0.to_string().as_str(),
-            "TERM HERE",
-            23.to_string().as_str(),
-        ]);
+        .set_header(vec!["Index", "Term", "Learning Score"]); // add other stats in the future
 
     'main: loop {
-        println!("{}:\n{}", deck.name, table);
+        let mut ptable = table.clone();
+        for i in 0..size {
+            ptable.add_row(vec![
+                i.to_string().as_str(),
+                "TERM HERE",
+                23.to_string().as_str(),
+            ]);
+        }
+        println!(
+            "{}:\t\t\tPage {} of {}\n{}",
+            deck.name, p, total_pages, table
+        );
 
         'input: loop {
             match stats_input(
                 "Use arrows to move through pages or type an index to view a particular card ",
             )? {
-                StatsInput::Up => {
-                    deck_by_card(&deck, size, 0, storage);
-                    break 'input;
-                }
-                StatsInput::Down => {}
+                StatsInput::Up => p = min(p + 1, total_pages),
+                StatsInput::Down => p = p.saturating_sub(1),
                 StatsInput::Index(n) => {
-                    // construct a Deck with only the cards from this category
-                    let new_deck = Deck::from_cards(vec![Card::new("term", "def")]);
-                    deck_by_card(&new_deck, size, 0, storage);
+                    if false {
+                        card_stats(deck, n as i32, storage)?;
+                    }
                     break 'input;
                 }
+                StatsInput::Exit => return Ok(true),
                 _ => break 'main,
             }
         }
     }
-    Ok(())
+    Ok(false)
 }
 
 /// View the overview of a deck's stats, cards organized by learning progress
@@ -68,8 +73,7 @@ fn deck_by_category(deck: Deck, size: u32, storage: &mut Storage) -> anyhow::Res
         .load_preset(UTF8_FULL)
         .apply_modifier(UTF8_ROUND_CORNERS)
         .set_content_arrangement(ContentArrangement::Dynamic)
-        // .set_width(40)
-        .set_header(vec!["Progress", "Count", "Terms"])
+        .set_header(vec!["Progress", "Card Count", "Terms"])
         .add_row(vec!["Learned", 4.to_string().as_str(), "Hi, Bye, No, Yes"])
         .add_row(vec!["Learning", 2.to_string().as_str(), "Move, Go"])
         .add_row(vec![
@@ -93,11 +97,11 @@ fn deck_by_category(deck: Deck, size: u32, storage: &mut Storage) -> anyhow::Res
             match stats_input(
                 "Use down arrow to view the deck card-by-card or type an index for just that section ",
             )? {
-                StatsInput::Up => {
+                StatsInput::Down => {
                     deck_by_card(&deck, size, 0, storage)?;
                     break 'input;
                 }
-                StatsInput::Down => {}
+                StatsInput::Up => {}
                 StatsInput::Index(n) => {
                     // construct a Deck with only the cards from this category
                     if let Some(section) = decks.get(n as usize) {
@@ -129,6 +133,16 @@ fn overview(size: u32, page: u32, storage: &mut Storage) -> anyhow::Result<()> {
 
     'main: loop {
         // loop through decks and add rows as needed for page
+        let mut ptable = table.clone();
+        for i in 0..size {
+            ptable.add_row(vec![
+                i.to_string().as_str(),
+                "deck name",
+                23.to_string().as_str(),
+                "Hi, Yes, No, Bye",
+            ]);
+        }
+        println!("All Decks:\t\t\tPage {} of {}\n{}", p, total_pages, table);
 
         loop {
             match stats_input(
