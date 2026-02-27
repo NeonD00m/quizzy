@@ -310,9 +310,10 @@ pub fn learn_mode(
             let response = if let Some(str) = type_input("Type the answer of [ESC] ")? {
                 str
             } else {
-                println!("\n");
+                println!();
                 break 'questions;
             };
+            println!();
             let expected = if ask_term {
                 c.definition.clone()
             } else {
