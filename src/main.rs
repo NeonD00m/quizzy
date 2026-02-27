@@ -10,6 +10,7 @@ use crate::core::string_distance::string_distance;
 use crate::ui::cards::cards_mode;
 use crate::ui::gamble::gauntlet_mode;
 use crate::ui::learn::learn_mode;
+use crate::ui::stats::stats_mode;
 use chrono::Utc;
 use std::io::{Write, stdin, stdout};
 
@@ -92,7 +93,15 @@ pub enum Command {
         deck: String,
     },
     Stats {
-        deck: String,
+        deck: Option<String>,
+
+        /// Page size
+        #[arg(short, long, default_value_t = 10)]
+        size: u32,
+
+        /// Page size
+        #[arg(short, long, default_value_t = 0)]
+        page: u32,
     },
 }
 
@@ -315,8 +324,13 @@ fn main() -> anyhow::Result<()> {
             }
             Ok(())
         }
-        Command::Stats { deck } => {
-            todo!("stats for deck {}", deck);
+        Command::Stats { deck, size, page } => {
+            let deck_option: Option<Deck> = if let Some(name) = deck {
+                get_deck(resolve_deck_source(name.as_str()), &storage).ok()
+            } else {
+                None
+            };
+            stats_mode(deck_option, size, page, &mut storage)
         }
     }
 }

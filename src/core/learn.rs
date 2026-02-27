@@ -133,7 +133,7 @@ pub fn get_multiple_choice_for_card(
         out
     }
 
-    // use confusion-based candiates (if provided)
+    // use confusion-based candidates (if provided)
     let mut chosen: Vec<Card> = Vec::new();
     if let Some(confusion_vec) = confusions {
         // map confusion entries to cards
@@ -181,7 +181,7 @@ pub fn get_multiple_choice_for_card(
         }
     }
 
-    // *sighs* if we still don't have 3 cards, put placeholders
+    // *sighs* if we still don't have 3 cards, put placeholders and admit defeat
     for i in 0..((3_usize).saturating_sub(chosen.len())) {
         let str = format!("[No option {}]", i);
         chosen.push(Card::new(str.as_str(), str.as_str()));

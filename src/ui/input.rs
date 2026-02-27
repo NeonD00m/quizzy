@@ -205,6 +205,7 @@ pub fn read_input_with_fuse(allowed_seconds: u64, prefix: &str) -> anyhow::Resul
     }
 }
 
+/// `prefix` CANNOT HAVE new line characters
 pub fn type_input(prefix: &str) -> anyhow::Result<Option<String>> {
     let input_prefix = format!("{}> ", prefix);
     let mut stdout = stdout();
@@ -245,6 +246,96 @@ pub fn type_input(prefix: &str) -> anyhow::Result<Option<String>> {
                     return Ok(None);
                 }
                 KeyCode::Char(c) => input_buffer.push(c),
+                _ => {}
+            };
+        }
+        stdout.queue(cursor::MoveUp(1))?;
+    }
+}
+
+pub enum StatsInput {
+    Exit,
+    Back,
+    Index(u32),
+    Up,
+    Down,
+    Confirm,
+}
+
+/// KeyCode::Esc signals quit, KeyCode::BackTab signals to go back
+/// `prefix` CANNOT HAVE new line characters
+pub fn stats_input(prefix: &str) -> anyhow::Result<StatsInput> {
+    let input_prefix = format!("{}> ", prefix);
+    let mut stdout = stdout();
+    let mut input_buffer: u32 = 0;
+    let mut typed: u8 = 0;
+
+    // drain input buffer before starting loop
+    while event::poll(Duration::from_millis(0))? {
+        event::read()?;
+    }
+
+    let _guard = RawModeGuard::new();
+    stdout.execute(cursor::Show)?;
+    loop {
+        // RENDER INPUT LINE
+        let s = input_buffer.to_string();
+        stdout
+            .queue(cursor::MoveDown(1))?
+            .queue(cursor::MoveToColumn(0))?
+            .queue(Clear(ClearType::CurrentLine))?
+            .queue(Print(&input_prefix))?
+            .queue(Print(if typed > 0 { &s } else { "" }))?
+            .flush()?;
+
+        // NON-BLOCKING INPUT
+        if event::poll(Duration::from_millis(50))?
+            && let Event::Key(key) = event::read()?
+            && key.kind == KeyEventKind::Press
+        {
+            if key.modifiers == KeyModifiers::CONTROL
+                && (key.code == KeyCode::Char('c') || key.code == KeyCode::Char('d'))
+            {
+                stdout.execute(cursor::MoveUp(1))?;
+                return Ok(StatsInput::Exit);
+            }
+
+            match key.code {
+                KeyCode::Up => {
+                    stdout.execute(cursor::MoveUp(1))?;
+                    return Ok(StatsInput::Up);
+                }
+                KeyCode::Down => {
+                    stdout.execute(cursor::MoveUp(1))?;
+                    return Ok(StatsInput::Down);
+                }
+                KeyCode::Backspace => {
+                    input_buffer /= 10;
+                    typed = typed.saturating_sub(1);
+                }
+                KeyCode::Enter => {
+                    stdout.execute(cursor::MoveUp(1))?;
+                    if typed > 0 {
+                        return Ok(StatsInput::Index(input_buffer));
+                    } else {
+                        return Ok(StatsInput::Confirm);
+                    }
+                }
+                KeyCode::Esc => {
+                    stdout.execute(cursor::MoveUp(1))?;
+                    return Ok(StatsInput::Back);
+                }
+                KeyCode::Char('q') | KeyCode::Char('Q') => {
+                    stdout.execute(cursor::MoveUp(1))?;
+                    return Ok(StatsInput::Exit);
+                }
+                KeyCode::Char(c) => {
+                    // only allow typing numbers 0-9 for indices
+                    if let Some(d) = c.to_digit(10) {
+                        input_buffer = input_buffer.saturating_mul(10).saturating_add(d);
+                        typed += 1;
+                    }
+                }
                 _ => {}
             };
         }
