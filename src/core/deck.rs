@@ -132,7 +132,7 @@ fn read_deck_csv(path: PathBuf) -> anyhow::Result<Deck> {
             .lines()
             .filter_map(|line| {
                 if let Ok(line) = line {
-                    let mut parts = line.split(",");
+                    let mut parts = line.split(","); // TODO: use csv package to properly read
                     let term = parts.next()?;
                     let definition = parts.next()?;
                     Some(Card::new(term, definition))

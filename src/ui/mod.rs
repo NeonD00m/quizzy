@@ -1,5 +1,6 @@
 pub mod cards;
 pub mod gamble;
+pub mod general;
 pub mod input;
 pub mod learn;
 pub mod stats;

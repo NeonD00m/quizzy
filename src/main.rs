@@ -208,54 +208,8 @@ fn main() -> anyhow::Result<()> {
             deck,
             term,
             definition,
-        } => {
-            // make sure user isn't trying to add to a file-based deck
-            let deck = (match resolve_deck_source(deck.as_str()) {
-                DeckSource::Named(name) => Some(storage.get_deck_by_name(&name)?),
-                DeckSource::File(_) => {
-                    println!("To add to a file-backed deck, create or find a saved deck first.");
-                    None
-                }
-            })
-            .ok_or(anyhow::anyhow!("Cannot add to a file-backed deck."))?;
-            if let Some(deck_id) = deck.id {
-                storage.add_card_to_deck(deck_id, &term, &definition)?;
-                println!("Added card to deck '{}'", deck.name);
-            } else {
-                anyhow::bail!("Missing deck id from storage?")
-            }
-            Ok(())
-        }
-        Command::Remove { deck, term } => {
-            println!(
-                "Removing the first matching term ({}) from deck {}",
-                term, deck
-            );
-            let deck = (match resolve_deck_source(deck.as_str()) {
-                DeckSource::Named(name) => Some(storage.get_deck_by_name(&name)?),
-                DeckSource::File(_) => {
-                    println!(
-                        "Cannot remove from file-backed deck. Create or save a deck from it first."
-                    );
-                    None
-                }
-            })
-            .ok_or(anyhow::anyhow!("Cannot remove from file-backed deck."))?;
-            // find card id
-            if let Some((card_id, _, _)) = deck
-                .cards
-                .iter()
-                .filter(|c| c.term == term) // \/ does the card need to be cloned here?
-                .map(|c| (c.id, c.term.clone(), c.definition.clone())) // could &str be used?
-                .find(|(id, _, _)| id.is_some())
-            {
-                storage.remove_card(card_id.unwrap())?;
-                println!("Removed card '{}' from deck '{}'", term, deck.name);
-            } else {
-                println!("No matching card '{}' found in deck '{}'", term, deck.name);
-            }
-            Ok(())
-        }
+        } => ui::general::add(&mut storage, deck, term, definition),
+        Command::Remove { deck, term } => ui::general::remove(&mut storage, deck, term),
         Command::List { deck } => match deck {
             Some(name) => {
                 println!("Listing out cards in deck: {}", name);
@@ -303,27 +257,15 @@ fn main() -> anyhow::Result<()> {
             get_deck(resolve_deck_source(deck.as_str()), &storage)?,
             &mut storage,
         ),
-        Command::Delete { deck } => {
-            println!(
-                "Are you sure you want to delete from database?\n(This means removing the saved deck by this name)"
-            );
-            match resolve_deck_source(deck.as_str()) {
-                DeckSource::Named(name) => {
-                    storage.delete_deck_by_name(&name)?;
-                    println!("Deleted saved deck '{}'", name);
-                    println!(
-                        "Would you also like to delete all stats associated with this deck?\n(They can be preserved and then accessed by `quizzy stats {deck}`"
-                    );
-                    todo!();
-                }
-                DeckSource::File(_) => {
-                    println!(
-                        "Path specified; not deleting files. Use the deck name of a saved deck to delete from DB."
-                    );
-                }
+        Command::Delete { deck } => match resolve_deck_source(deck.as_str()) {
+            DeckSource::Named(name) => ui::general::delete(&mut storage, name),
+            DeckSource::File(_) => {
+                println!(
+                    "Path specified; not deleting files. Use the deck name of a saved deck to delete from DB."
+                );
+                Ok(())
             }
-            Ok(())
-        }
+        },
         Command::Stats { deck, size, page } => {
             let deck_option: Option<Deck> = if let Some(name) = deck {
                 get_deck(resolve_deck_source(name.as_str()), &storage).ok()

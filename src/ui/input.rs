@@ -233,6 +233,11 @@ pub fn type_input(prefix: &str) -> anyhow::Result<Option<String>> {
             && let Event::Key(key) = event::read()?
             && key.kind == KeyEventKind::Press
         {
+            if key.modifiers == KeyModifiers::CONTROL
+                && (key.code == KeyCode::Char('c') || key.code == KeyCode::Char('d'))
+            {
+                return Ok(None);
+            }
             match key.code {
                 KeyCode::Backspace => {
                     input_buffer.pop();

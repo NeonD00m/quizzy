@@ -27,6 +27,13 @@ pub struct CardStatRow {
     pub next_due: i64,
 }
 
+pub struct DeckListItem {
+    pub id: i64,
+    pub name: String,
+    pub created_at: i64,
+    pub card_count: i64,
+}
+
 pub type SessionDelta = (i64, i64, i64, Option<crate::core::learn::SM2Stats>);
 
 // make learning score constants for correct and incorrect answers
@@ -298,6 +305,35 @@ impl Storage {
         Ok(out)
     }
 
+    /// List decks with metadata (id, name, created_at, card_count)
+    pub fn list_decks_detailed(&self) -> Result<Vec<DeckListItem>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT d.id, d.name, d.created_at, COUNT(c.id)
+                 FROM decks d
+                 LEFT JOIN cards c ON d.id = c.deck_id
+                 GROUP BY d.id
+                 ORDER BY d.name",
+            )
+            .context("Failed to prepare list_decks_detailed.")?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(DeckListItem {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    created_at: r.get(2)?,
+                    card_count: r.get(3)?,
+                })
+            })
+            .context("Failed to query detailed decks.")?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.context("Failed mapping detailed deck row.")?);
+        }
+        Ok(out)
+    }
+
     /// Create a deck and persist all cards in a single transaction.
     /// Returns the new deck id.
     pub fn create_deck_from_core(
@@ -413,23 +449,27 @@ impl Storage {
         })
     }
 
-    /// Delete a deck by id (maybe use this over name to prevent accidents?)
+    /// Delete a deck by id and its associated stats
     pub fn delete_deck_by_id(&mut self, deck_id: i64) -> Result<()> {
+        self.delete_stats_by_deck_id(deck_id)?;
         self.conn
             .execute("DELETE FROM decks WHERE id = ?1", params![deck_id])
             .context("Failed to delete deck.")?;
         Ok(())
     }
 
-    /// Delete a deck by name (so much more convenient)
-    pub fn delete_deck_by_name(&mut self, name: &str) -> Result<()> {
-        let deck_id: i64 = self
-            .conn
-            .query_row("SELECT id FROM decks WHERE name = ?1", params![name], |r| {
-                r.get(0)
-            })
-            .with_context(|| format!("Deck '{}' not found.", name))?;
-        self.delete_deck_by_id(deck_id)
+    /// Delete stats for a deck (deck_stats and card_stats)
+    pub fn delete_stats_by_deck_id(&mut self, deck_id: i64) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM deck_stats WHERE deck_id = ?1", params![deck_id])
+            .context("Failed to delete deck_stats.")?;
+        self.conn
+            .execute(
+                "DELETE FROM card_stats WHERE card_id IN (SELECT id FROM cards WHERE deck_id = ?1)",
+                params![deck_id],
+            )
+            .context("Failed to delete card_stats.")?;
+        Ok(())
     }
 
     /// Immediate update for a single answer (durable).
