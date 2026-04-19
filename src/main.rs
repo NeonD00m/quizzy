@@ -2,7 +2,9 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 mod core;
 mod ui;
-use crate::core::deck::{Deck, DeckSource, read_deck_from_file, resolve_deck_source};
+use crate::core::deck::{
+    Deck, DeckSource, read_deck_from_file, resolve_deck_source, write_deck_to_file,
+};
 use crate::core::import::import_from_quizlet;
 use crate::core::learn::commit_session_with_retries;
 use crate::core::storage::{Storage, get_deck};
@@ -11,7 +13,7 @@ use crate::ui::cards::cards_mode;
 use crate::ui::gamble::gauntlet_mode;
 use crate::ui::learn::learn_mode;
 use crate::ui::stats::stats_mode;
-use chrono::Utc;
+use chrono::{TimeZone, Utc};
 use std::io::{Write, stdin, stdout};
 
 #[derive(Parser)]
@@ -23,32 +25,53 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Command {
-    Compare {
-        s1: String,
-        s2: String,
-    },
+    /// Compares two strings and outputs a distance metric (for testing or fun).
+    Compare { s1: String, s2: String },
+    /// Creates a new deck with a given name, optionally importing from a file.
     New {
         name: String,
         // pass in a file with tab separated terms and definitions
         file: Option<PathBuf>,
     },
+    /// Imports a deck from a Quizlet URL or JSON file from the API.
+    ///
+    /// Imports a deck from a Quizlet URL or JSON file from the API. If a name is provided, it will be used for the deck; otherwise, you will be prompted to provide one.
     Import {
         name: Option<String>,
         // using url requires browser available, json can be used directly
         url_or_json: Option<String>,
     },
+    /// Writes a deck (by name or file path) to a file in the current directory.
+    ///
+    /// Writes a deck (by name or file path) to a file in the current directory. The file type is determined by the extension you provide (e.g. csv, tsv, json). If the file already exists, it will be overwritten.
+    Export {
+        name: String,
+        /// Destination file path (e.g. deck.csv, output.json)
+        file_path: PathBuf,
+    },
+    /// Adds a new card to a saved deck.
     Add {
         deck: String,
         term: String,
         definition: String,
     },
-    Remove {
-        deck: String,
-        term: String,
-    },
+    /// Removes a card from a saved deck by term.
+    Remove { deck: String, term: String },
+    /// Renames a saved deck.
+    Rename { deck_id: i64, new_name: String },
+    /// Lists saved decks, or cards in a deck if a deck name is provided.
+    ///
+    /// Lists saved decks, or cards in a deck if a deck name is provided. Use -v/--verbose for card counts and creation dates when listing decks.
     List {
         deck: Option<String>,
+
+        /// List decks with more details (e.g. card count, last studied)
+        #[arg(short, long)]
+        verbose: bool,
     },
+    /// Starts a learning session with a deck, asking questions in various formats.
+    ///
+    /// Starts a learning session with a deck, asking questions in various formats. By default, it will ask a mix of term and definition questions, prioritizing written questions over multiple choice. Use the flags to customize the question types and quantity. Performance stats will be saved after the session unless --nostats is used.
     Learn {
         deck: String,
 
@@ -70,12 +93,13 @@ pub enum Command {
 
         /// Ask multiple choice questions only
         #[arg(short, long, default_value_t = false)]
-        multiplechoice: bool,
+        multiple_choice: bool,
 
         /// Set the amount of questions
         #[arg(short, long, default_value_t = 20)]
         questions: u8,
     },
+    /// Review cards in a deck without quizzing, optionally shuffling the order.
     Cards {
         deck: String,
 
@@ -83,15 +107,13 @@ pub enum Command {
         #[arg(short, long)]
         shuffle: bool,
     },
-    Gauntlet {
-        deck: String,
-    },
-    Gamble {
-        deck: String,
-    },
-    Delete {
-        deck: String,
-    },
+    /// A more intense learning mode that will have you on your toes!
+    Gauntlet { deck: String },
+    /// Currently an alias for Gauntlet mode, but may soon have a separate style of game.
+    Gamble { deck: String },
+    /// Permanently deletes a deck from the database by name. Use with caution!
+    Delete { deck: String },
+    /// Shows performance statistics for a deck, or overall if no deck is specified. Stats are paginated with --size and --page.
     Stats {
         deck: Option<String>,
 
@@ -204,13 +226,20 @@ fn main() -> anyhow::Result<()> {
         Command::Import { name, url_or_json } => {
             import_from_quizlet(name, url_or_json, &mut storage)
         }
+        Command::Export { name, file_path } => {
+            let deck = get_deck(resolve_deck_source(name.as_str()), &storage)?;
+            println!("Exporting deck '{}' to {}...", name, file_path.display());
+            write_deck_to_file(&deck, file_path)?;
+            println!("Successfully exported deck.");
+            Ok(())
+        }
         Command::Add {
             deck,
             term,
             definition,
         } => ui::general::add(&mut storage, deck, term, definition),
         Command::Remove { deck, term } => ui::general::remove(&mut storage, deck, term),
-        Command::List { deck } => match deck {
+        Command::List { deck, verbose } => match deck {
             Some(name) => {
                 println!("Listing out cards in deck: {}", name);
                 let deck = get_deck(resolve_deck_source(name.as_str()), &storage)?;
@@ -221,8 +250,22 @@ fn main() -> anyhow::Result<()> {
             }
             None => {
                 println!("Listing out saved decks:");
-                for (id, name) in storage.list_decks()? {
-                    println!("({})\t{}", id, name);
+                if verbose {
+                    for item in storage.list_decks_detailed()? {
+                        let date_str = Utc
+                            .timestamp_opt(item.created_at, 0)
+                            .single()
+                            .map(|dt| dt.to_rfc3339())
+                            .unwrap_or_else(|| "Never".to_string());
+                        println!(
+                            "({})\t{}\t {} cards\t Created At: {}",
+                            item.id, item.name, item.card_count, date_str
+                        );
+                    }
+                } else {
+                    for (id, name) in storage.list_decks()? {
+                        println!("({})\t{}", id, name);
+                    }
                 }
                 Ok(())
             }
@@ -233,7 +276,7 @@ fn main() -> anyhow::Result<()> {
             terms,
             definitions,
             written,
-            multiplechoice,
+            multiple_choice,
             questions,
         } => learn_mode(
             get_deck(resolve_deck_source(deck.as_str()), &storage)?,
@@ -241,7 +284,7 @@ fn main() -> anyhow::Result<()> {
             terms,
             definitions,
             written,
-            multiplechoice,
+            multiple_choice,
             questions,
             &mut storage,
         ),
@@ -274,5 +317,6 @@ fn main() -> anyhow::Result<()> {
             };
             stats_mode(deck_option, size, page, &mut storage)
         }
+        _ => Ok(()),
     }
 }

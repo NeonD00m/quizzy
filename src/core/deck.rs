@@ -1,11 +1,11 @@
 use anyhow::Context;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::vec::Vec;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Card {
     pub id: Option<i64>, // the database id when persisted
     pub term: String,
@@ -72,12 +72,12 @@ pub enum DeckSource {
     File(PathBuf),
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 struct JsonDeck {
     cards: Vec<JsonCard>,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 struct JsonCard {
     term: String,
     definition: String,
@@ -126,22 +126,20 @@ fn read_deck_tsv(path: PathBuf) -> anyhow::Result<Deck> {
 }
 
 fn read_deck_csv(path: PathBuf) -> anyhow::Result<Deck> {
-    let file = File::open(path.as_path()).context("Failed to open file.")?;
-    Ok(Deck::from_cards(
-        BufReader::new(file)
-            .lines()
-            .filter_map(|line| {
-                if let Ok(line) = line {
-                    let mut parts = line.split(","); // TODO: use csv package to properly read
-                    let term = parts.next()?;
-                    let definition = parts.next()?;
-                    Some(Card::new(term, definition))
-                } else {
-                    None
-                }
-            })
-            .collect(),
-    ))
+    let mut rdr = csv::ReaderBuilder::new()
+        .has_headers(false)
+        .from_path(path)
+        .context("Failed to open CSV file.")?;
+
+    let mut cards = Vec::new();
+    for result in rdr.records() {
+        let record = result.context("Failed to read CSV record.")?;
+        if record.len() >= 2 {
+            cards.push(Card::new(&record[0], &record[1]));
+        }
+    }
+
+    Ok(Deck::from_cards(cards))
 }
 
 fn read_deck_json(path: PathBuf) -> anyhow::Result<Deck> {
@@ -175,6 +173,66 @@ pub fn read_deck_from_file(path: PathBuf) -> anyhow::Result<Deck> {
                 ext
             );
             read_deck_tsv(path)
+        }
+    }
+}
+
+fn write_deck_csv(deck: &Deck, path: PathBuf) -> anyhow::Result<()> {
+    let mut wtr = csv::Writer::from_path(path).context("Failed to create CSV writer.")?;
+    for card in &deck.cards {
+        wtr.write_record(&[&card.term, &card.definition])
+            .context("Failed to write CSV record.")?;
+    }
+    wtr.flush().context("Failed to flush CSV writer.")?;
+    Ok(())
+}
+
+fn write_deck_tsv(deck: &Deck, path: PathBuf) -> anyhow::Result<()> {
+    let mut wtr = csv::WriterBuilder::new()
+        .delimiter(b'\t')
+        .from_path(path)
+        .context("Failed to create TSV writer.")?;
+    for card in &deck.cards {
+        wtr.write_record(&[&card.term, &card.definition])
+            .context("Failed to write TSV record.")?;
+    }
+    wtr.flush().context("Failed to flush TSV writer.")?;
+    Ok(())
+}
+
+fn write_deck_json(deck: &Deck, path: PathBuf) -> anyhow::Result<()> {
+    let file = File::create(path).context("Failed to create JSON file.")?;
+    let json_deck = JsonDeck {
+        cards: deck
+            .cards
+            .iter()
+            .map(|c| JsonCard {
+                term: c.term.clone(),
+                definition: c.definition.clone(),
+            })
+            .collect(),
+    };
+    serde_json::to_writer_pretty(file, &json_deck).context("Failed to write JSON deck.")?;
+    Ok(())
+}
+
+pub fn write_deck_to_file(deck: &Deck, path: PathBuf) -> anyhow::Result<()> {
+    let ext = path
+        .extension()
+        .and_then(|x| x.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    match ext.as_str() {
+        "csv" => write_deck_csv(deck, path),
+        "tsv" => write_deck_tsv(deck, path),
+        "json" => write_deck_json(deck, path),
+        "txt" => write_deck_tsv(deck, path),
+        _ => {
+            println!(
+                "Unknown file extension '{}', defaulting to TSV format.",
+                ext
+            );
+            write_deck_tsv(deck, path)
         }
     }
 }

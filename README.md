@@ -41,8 +41,8 @@ cargo install --path .
 
 Quickstart examples
 ```quizzy/README.md#L256-280
-# Create a new deck from a TSV (tab-separated pairs)
-quizzy new mydeck examples/tutorial.csv
+# Create a new deck from a CSV
+quizzy new mydeck examples/worldCapitals.csv
 
 # Import from a Quizlet link into a saved deck named "My Quizlet" (requires browser)
 quizzy import "My Quizlet" "https://quizlet.com/1234567890/some-study-deck-flash-cards/"

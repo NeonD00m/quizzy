@@ -2,8 +2,7 @@ use crate::core::deck::{DeckSource, resolve_deck_source};
 use crate::core::storage::Storage;
 use crate::ui::input::{enter_input, type_input};
 use anyhow::Context;
-use chrono::TimeZone;
-use chrono::Utc;
+use chrono::{TimeZone, Utc};
 use crossterm::{
     QueueableCommand, cursor,
     event::KeyCode,
