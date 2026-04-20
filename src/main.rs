@@ -55,8 +55,16 @@ pub enum Command {
         term: String,
         definition: String,
     },
+    /// Adds terms and definitions from a file to a saved deck.
+    Append {
+        deck: String,
+        /// File path to import from (e.g. new_cards.csv)
+        file: PathBuf,
+    },
     /// Removes a card from a saved deck by term.
     Remove { deck: String, term: String },
+    /// Clears all cards from a saved deck, but keeps the deck itself.
+    Clear { deck: String },
     /// Renames a saved deck.
     Rename { deck_id: i64, new_name: String },
     /// Lists saved decks, or cards in a deck if a deck name is provided.
