@@ -135,6 +135,7 @@ pub fn db_path_from_env_or_default() -> PathBuf {
 
 impl Storage {
     /// Return the `updated_at` timestamp from `user_profile` (if present)
+    #[allow(dead_code)]
     pub fn get_user_last_active(&self) -> Result<Option<i64>> {
         use rusqlite::OptionalExtension;
         let val: Option<i64> = self
@@ -147,6 +148,43 @@ impl Storage {
             .optional()
             .context("Failed to query updated_at in user_profile.")?;
         Ok(val)
+    }
+
+    /// Return the maximum `last_studied_at` from `deck_stats` (if present)
+    pub fn get_user_last_studied(&self) -> Result<Option<i64>> {
+        use rusqlite::OptionalExtension;
+        let val: Option<i64> = self
+            .conn
+            .query_row("SELECT MAX(last_studied_at) FROM deck_stats", [], |r| {
+                r.get(0)
+            })
+            .optional()
+            .context("Failed to query MAX(last_studied_at) in deck_stats.")?;
+        // If MAX returns NULL, optional() might still return Some(None) depending on rusqlite behavior
+        // Actually MAX() on empty set or all NULLs returns NULL in SQLite.
+        Ok(val)
+    }
+
+    /// Update the `updated_at` timestamp in `user_profile` to now.
+    pub fn update_user_last_active(&mut self) -> Result<()> {
+        self.conn
+            .execute(
+                "UPDATE user_profile SET updated_at = ?1 WHERE id = 1",
+                params![now_secs()],
+            )
+            .context("Failed to update user_profile updated_at.")?;
+        Ok(())
+    }
+
+    /// Update the `last_studied_at` timestamp for a specific deck in `deck_stats` to now.
+    pub fn update_deck_last_studied(&mut self, deck_id: i64) -> Result<()> {
+        self.conn
+            .execute(
+                "UPDATE deck_stats SET last_studied_at = ?1 WHERE deck_id = ?2",
+                params![now_secs(), deck_id],
+            )
+            .context("Failed to update deck_stats last_studied_at.")?;
+        Ok(())
     }
 
     /// Find unsaved session files written by fallback logic.
@@ -393,11 +431,62 @@ impl Storage {
         Ok(card_id)
     }
 
+    /// Add multiple cards to a deck in a single transaction
+    pub fn add_cards_to_deck_batch(&mut self, deck_id: i64, cards: Vec<Card>) -> Result<()> {
+        let now = now_secs();
+        let tx = self
+            .conn
+            .transaction()
+            .context("Failed to start transaction for batch card insert.")?;
+        for c in cards {
+            tx.execute(
+                "INSERT INTO cards (deck_id, term, definition, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)",
+                params![deck_id, c.term, c.definition, now],
+            ).context("Failed to insert card in batch.")?;
+            let card_id = tx.last_insert_rowid();
+            tx.execute(
+                "INSERT INTO card_stats (card_id) VALUES (?1)",
+                params![card_id],
+            )
+            .context("Failed to insert card_stats in batch.")?;
+        }
+        tx.commit()
+            .context("Failed to commit batch card insert transaction.")?;
+        Ok(())
+    }
+
     /// Remove a card by id
     pub fn remove_card(&mut self, card_id: i64) -> Result<()> {
         self.conn
             .execute("DELETE FROM cards WHERE id = ?1", params![card_id])
             .context("Failed to delete card.")?;
+        Ok(())
+    }
+
+    /// Remove all cards from a deck
+    pub fn clear_deck(&mut self, deck_id: i64) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM cards WHERE deck_id = ?1", params![deck_id])
+            .context("Failed to clear cards from deck.")?;
+        // Also clear deck stats
+        self.conn
+            .execute(
+                "UPDATE deck_stats SET questions_answered_total = 0, questions_correct_total = 0, last_studied_at = NULL WHERE deck_id = ?1",
+                params![deck_id],
+            )
+            .context("Failed to reset deck stats.")?;
+        Ok(())
+    }
+
+    /// Rename a deck
+    pub fn rename_deck(&mut self, deck_id: i64, new_name: &str) -> Result<()> {
+        let now = now_secs();
+        self.conn
+            .execute(
+                "UPDATE decks SET name = ?1, updated_at = ?2 WHERE id = ?3",
+                params![new_name, now, deck_id],
+            )
+            .context("Failed to rename deck.")?;
         Ok(())
     }
 
@@ -461,7 +550,10 @@ impl Storage {
     /// Delete stats for a deck (deck_stats and card_stats)
     pub fn delete_stats_by_deck_id(&mut self, deck_id: i64) -> Result<()> {
         self.conn
-            .execute("DELETE FROM deck_stats WHERE deck_id = ?1", params![deck_id])
+            .execute(
+                "DELETE FROM deck_stats WHERE deck_id = ?1",
+                params![deck_id],
+            )
             .context("Failed to delete deck_stats.")?;
         self.conn
             .execute(

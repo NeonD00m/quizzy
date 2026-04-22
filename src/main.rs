@@ -3,7 +3,7 @@ use std::path::PathBuf;
 mod core;
 mod ui;
 use crate::core::deck::{
-    Deck, DeckSource, read_deck_from_file, resolve_deck_source, write_deck_to_file,
+    Deck, DeckSource, resolve_deck_source, write_deck_to_file,
 };
 use crate::core::import::import_from_quizlet;
 use crate::core::learn::commit_session_with_retries;
@@ -27,11 +27,11 @@ pub struct Cli {
 pub enum Command {
     /// Compares two strings and outputs a distance metric (for testing or fun).
     Compare { s1: String, s2: String },
-    /// Creates a new deck with a given name, optionally importing from a file.
+    /// Creates a new deck with a given name, optionally importing from a file or another deck.
     New {
         name: String,
-        // pass in a file with tab separated terms and definitions
-        file: Option<PathBuf>,
+        /// Source to import from (e.g. new_cards.csv or "Spanish Phrases")
+        source: Option<String>,
     },
     /// Imports a deck from a Quizlet URL or JSON file from the API.
     ///
@@ -55,18 +55,18 @@ pub enum Command {
         term: String,
         definition: String,
     },
-    /// Adds terms and definitions from a file to a saved deck.
+    /// Adds terms and definitions from a file or another deck to a saved deck.
     Append {
         deck: String,
-        /// File path to import from (e.g. new_cards.csv)
-        file: PathBuf,
+        /// Source to import from (e.g. new_cards.csv or "Spanish Phrases")
+        source: String,
     },
     /// Removes a card from a saved deck by term.
     Remove { deck: String, term: String },
     /// Clears all cards from a saved deck, but keeps the deck itself.
     Clear { deck: String },
     /// Renames a saved deck.
-    Rename { deck_id: i64, new_name: String },
+    Rename { deck: String, new_name: String },
     /// Lists saved decks, or cards in a deck if a deck name is provided.
     ///
     /// Lists saved decks, or cards in a deck if a deck name is provided. Use -v/--verbose for card counts and creation dates when listing decks.
@@ -137,13 +137,13 @@ pub enum Command {
 
 fn startup(storage: &mut Storage) -> anyhow::Result<()> {
     // 1) Welcome back if user inactive for a while (7 days)
-    if let Ok(Some(last_active)) = storage.get_user_last_active() {
+    if let Ok(Some(last_studied)) = storage.get_user_last_studied() {
         let now = Utc::now().timestamp();
-        let secs_since = now - last_active;
+        let secs_since = now - last_studied;
         let seven_days = 7 * 24 * 60 * 60;
         if secs_since >= seven_days {
             println!(
-                "Welcome back! It's been {} days since you last used Quizzy.",
+                "Welcome back! It's been {} days since you last studied with Quizzy.",
                 secs_since / 86400
             );
         }
@@ -216,21 +216,7 @@ fn main() -> anyhow::Result<()> {
             println!("String Distance: {}", string_distance(s1, s2));
             Ok(())
         }
-        Command::New { name, file } => {
-            println!("creating deck by name: {}", name);
-            let deck = match file {
-                Some(p) => {
-                    let mut d = read_deck_from_file(p)?;
-                    d.name = name.to_string();
-                    d
-                }
-                None => Deck::named(name),
-            };
-            println!("Saving deck {}", deck.name); // double check name just in case
-            let deck_id = storage.create_deck_from_core(deck, None, None)?;
-            println!("Successfully saved deck. ({})", deck_id);
-            Ok(())
-        }
+        Command::New { name, source } => ui::general::new(&mut storage, name, source),
         Command::Import { name, url_or_json } => {
             import_from_quizlet(name, url_or_json, &mut storage)
         }
@@ -246,7 +232,10 @@ fn main() -> anyhow::Result<()> {
             term,
             definition,
         } => ui::general::add(&mut storage, deck, term, definition),
+        Command::Append { deck, source } => ui::general::append(&mut storage, deck, source),
         Command::Remove { deck, term } => ui::general::remove(&mut storage, deck, term),
+        Command::Clear { deck } => ui::general::clear(&mut storage, deck),
+        Command::Rename { deck, new_name } => ui::general::rename(&mut storage, deck, new_name),
         Command::List { deck, verbose } => match deck {
             Some(name) => {
                 println!("Listing out cards in deck: {}", name);
@@ -286,28 +275,47 @@ fn main() -> anyhow::Result<()> {
             written,
             multiple_choice,
             questions,
-        } => learn_mode(
-            get_deck(resolve_deck_source(deck.as_str()), &storage)?,
-            nostats,
-            terms,
-            definitions,
-            written,
-            multiple_choice,
-            questions,
-            &mut storage,
-        ),
-        Command::Cards { deck, shuffle } => cards_mode(
-            get_deck(resolve_deck_source(deck.as_str()), &storage)?,
-            shuffle,
-        ),
-        Command::Gamble { deck } => gauntlet_mode(
-            get_deck(resolve_deck_source(deck.as_str()), &storage)?,
-            &mut storage,
-        ),
-        Command::Gauntlet { deck } => gauntlet_mode(
-            get_deck(resolve_deck_source(deck.as_str()), &storage)?,
-            &mut storage,
-        ),
+        } => {
+            let deck = get_deck(resolve_deck_source(deck.as_str()), &storage)?;
+            storage.update_user_last_active()?;
+            if let Some(id) = deck.id {
+                storage.update_deck_last_studied(id)?;
+            }
+            learn_mode(
+                deck,
+                nostats,
+                terms,
+                definitions,
+                written,
+                multiple_choice,
+                questions,
+                &mut storage,
+            )
+        }
+        Command::Cards { deck, shuffle } => {
+            let deck = get_deck(resolve_deck_source(deck.as_str()), &storage)?;
+            storage.update_user_last_active()?;
+            if let Some(id) = deck.id {
+                storage.update_deck_last_studied(id)?;
+            }
+            cards_mode(deck, shuffle)
+        }
+        Command::Gamble { deck } => {
+            let deck = get_deck(resolve_deck_source(deck.as_str()), &storage)?;
+            storage.update_user_last_active()?;
+            if let Some(id) = deck.id {
+                storage.update_deck_last_studied(id)?;
+            }
+            gauntlet_mode(deck, &mut storage)
+        }
+        Command::Gauntlet { deck } => {
+            let deck = get_deck(resolve_deck_source(deck.as_str()), &storage)?;
+            storage.update_user_last_active()?;
+            if let Some(id) = deck.id {
+                storage.update_deck_last_studied(id)?;
+            }
+            gauntlet_mode(deck, &mut storage)
+        }
         Command::Delete { deck } => match resolve_deck_source(deck.as_str()) {
             DeckSource::Named(name) => ui::general::delete(&mut storage, name),
             DeckSource::File(_) => {
@@ -325,6 +333,5 @@ fn main() -> anyhow::Result<()> {
             };
             stats_mode(deck_option, size, page, &mut storage)
         }
-        _ => Ok(()),
     }
 }
