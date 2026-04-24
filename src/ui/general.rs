@@ -1,5 +1,5 @@
 use crate::core::deck::{DeckSource, resolve_deck_source};
-use crate::core::storage::{DeckListItem, Storage};
+use crate::core::storage::{DeckListItem, Storage, get_deck};
 use crate::ui::input::{enter_input, type_input};
 use anyhow::Context;
 use chrono::{TimeZone, Utc};
@@ -79,6 +79,7 @@ pub fn add(
     Ok(())
 }
 
+// TODO: make it so that the deck selection function is more flexible and use it for choosing terms
 pub fn remove(storage: &mut Storage, deck_name: String, term: String) -> anyhow::Result<()> {
     match resolve_deck_source(deck_name.as_str()) {
         DeckSource::Named(name) => {
@@ -165,11 +166,7 @@ pub fn rename(storage: &mut Storage, deck_name: String, new_name: String) -> any
     Ok(())
 }
 
-pub fn new(
-    storage: &mut Storage,
-    name: String,
-    source_arg: Option<String>,
-) -> anyhow::Result<()> {
+pub fn new(storage: &mut Storage, name: String, source_arg: Option<String>) -> anyhow::Result<()> {
     println!("creating deck by name: {}", name);
     let deck = if let Some(source) = source_arg {
         match resolve_deck_source(source.as_str()) {
@@ -204,15 +201,13 @@ pub fn new(
     Ok(())
 }
 
-pub fn append(
-    storage: &mut Storage,
-    deck_name: String,
-    source_arg: String,
-) -> anyhow::Result<()> {
+pub fn append(storage: &mut Storage, deck_name: String, source_arg: String) -> anyhow::Result<()> {
     let target_deck = match resolve_deck_source(deck_name.as_str()) {
         DeckSource::Named(name) => select_deck_by_name(storage, &name, "append to")?,
         DeckSource::File(_) => {
-            println!("Cannot append to a file-backed deck directly. Save it to the database first.");
+            println!(
+                "Cannot append to a file-backed deck directly. Save it to the database first."
+            );
             None
         }
     };
@@ -248,3 +243,61 @@ pub fn append(
     Ok(())
 }
 
+pub fn list(
+    storage: &mut Storage,
+    deck: Option<String>,
+    search: Option<String>,
+    verbose: bool,
+) -> anyhow::Result<()> {
+    match deck {
+        Some(name) => {
+            // println!("Listing out cards in deck: {}", name);
+            let mut cards = get_deck(resolve_deck_source(name.as_str()), storage)?
+                .cards
+                .clone();
+            if let Some(search_str) = search {
+                let search_lower = search_str.to_lowercase();
+                cards.retain(|c| {
+                    c.term.to_lowercase().contains(&search_lower)
+                        || c.definition.to_lowercase().contains(&search_lower)
+                });
+            }
+            println!("{} cards found in deck '{}':", cards.len(), name);
+            for c in cards {
+                println!("{} -> {}", c.term, c.definition)
+            }
+            Ok(())
+        }
+        None => {
+            if verbose {
+                let mut items = storage.list_decks_detailed()?;
+                if let Some(search_str) = search {
+                    let search_lower = search_str.to_lowercase();
+                    items.retain(|item| item.name.to_lowercase().contains(&search_lower));
+                }
+                println!("{} decks found:", items.len());
+                for item in items {
+                    let date_str = Utc
+                        .timestamp_opt(item.created_at, 0)
+                        .single()
+                        .map(|dt| dt.to_rfc3339())
+                        .unwrap_or_else(|| "Never".to_string());
+                    println!(
+                        "({})\t{}\t {} cards\t Created At: {}",
+                        item.id, item.name, item.card_count, date_str
+                    );
+                }
+            } else {
+                let mut items = storage.list_decks()?;
+                if let Some(search_str) = search {
+                    let search_lower = search_str.to_lowercase();
+                    items.retain(|(_, name)| name.to_lowercase().contains(&search_lower));
+                }
+                for (id, name) in items {
+                    println!("({})\t{}", id, name);
+                }
+            }
+            Ok(())
+        }
+    }
+}

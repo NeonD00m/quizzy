@@ -2,9 +2,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 mod core;
 mod ui;
-use crate::core::deck::{
-    Deck, DeckSource, resolve_deck_source, write_deck_to_file,
-};
+use crate::core::deck::{Deck, DeckSource, resolve_deck_source, write_deck_to_file};
 use crate::core::import::import_from_quizlet;
 use crate::core::learn::commit_session_with_retries;
 use crate::core::storage::{Storage, get_deck};
@@ -13,7 +11,7 @@ use crate::ui::cards::cards_mode;
 use crate::ui::gamble::gauntlet_mode;
 use crate::ui::learn::learn_mode;
 use crate::ui::stats::stats_mode;
-use chrono::{TimeZone, Utc};
+use chrono::Utc;
 use std::io::{Write, stdin, stdout};
 
 #[derive(Parser)]
@@ -72,6 +70,9 @@ pub enum Command {
     /// Lists saved decks, or cards in a deck if a deck name is provided. Use -v/--verbose for card counts and creation dates when listing decks.
     List {
         deck: Option<String>,
+
+        /// If provided, only lists cards or decks containing the pattern in their name (case-insensitive)
+        search: Option<String>,
 
         /// List decks with more details (e.g. card count, last studied)
         #[arg(short, long)]
@@ -213,7 +214,7 @@ fn main() -> anyhow::Result<()> {
     startup(&mut storage)?;
     match cli.command {
         Command::Compare { s1, s2 } => {
-            println!("String Distance: {}", string_distance(s1, s2));
+            println!("String Distance: {}", string_distance(&s1, &s2));
             Ok(())
         }
         Command::New { name, source } => ui::general::new(&mut storage, name, source),
@@ -236,37 +237,11 @@ fn main() -> anyhow::Result<()> {
         Command::Remove { deck, term } => ui::general::remove(&mut storage, deck, term),
         Command::Clear { deck } => ui::general::clear(&mut storage, deck),
         Command::Rename { deck, new_name } => ui::general::rename(&mut storage, deck, new_name),
-        Command::List { deck, verbose } => match deck {
-            Some(name) => {
-                println!("Listing out cards in deck: {}", name);
-                let deck = get_deck(resolve_deck_source(name.as_str()), &storage)?;
-                for c in deck.cards {
-                    println!("{} -> {}", c.term, c.definition)
-                }
-                Ok(())
-            }
-            None => {
-                println!("Listing out saved decks:");
-                if verbose {
-                    for item in storage.list_decks_detailed()? {
-                        let date_str = Utc
-                            .timestamp_opt(item.created_at, 0)
-                            .single()
-                            .map(|dt| dt.to_rfc3339())
-                            .unwrap_or_else(|| "Never".to_string());
-                        println!(
-                            "({})\t{}\t {} cards\t Created At: {}",
-                            item.id, item.name, item.card_count, date_str
-                        );
-                    }
-                } else {
-                    for (id, name) in storage.list_decks()? {
-                        println!("({})\t{}", id, name);
-                    }
-                }
-                Ok(())
-            }
-        },
+        Command::List {
+            deck,
+            search,
+            verbose,
+        } => ui::general::list(&mut storage, deck, search, verbose),
         Command::Learn {
             deck,
             nostats,

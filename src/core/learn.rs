@@ -140,7 +140,7 @@ pub fn get_multiple_choice_for_card(
         let mut confusion_candidates: Vec<(i64, Card)> = Vec::new();
         for (mistaken_id, count) in confusion_vec.iter() {
             if let Some(card) = cards.iter().find(|oc| oc.id == Some(*mistaken_id)) {
-                if card == c {
+                if c.same(card) {
                     continue; // important sanity check lol
                 }
                 // cap the confusion count to 20 to not over-value a single card
@@ -150,7 +150,7 @@ pub fn get_multiple_choice_for_card(
         let mut confusions_chosen = weighted_sample_no_replacement(confusion_candidates, 3, rng);
         // append any unique cards
         for chosen_card in confusions_chosen.drain(..) {
-            if chosen_card != *c && !chosen.contains(&chosen_card) {
+            if c.different(&chosen_card) && !chosen.contains(&chosen_card) {
                 chosen.push(chosen_card);
             }
         }
@@ -162,11 +162,11 @@ pub fn get_multiple_choice_for_card(
             .filter(|other| *other != c)
             .map(|other| {
                 let candidate_str = if ask_term {
-                    other.definition.clone()
+                    other.definition.as_str()
                 } else {
-                    other.term.clone()
+                    other.term.as_str()
                 };
-                let dist = string_distance(candidate_str, expected.clone());
+                let dist = string_distance(candidate_str, &expected);
                 (dist, other.clone())
             })
             .collect();
@@ -174,9 +174,9 @@ pub fn get_multiple_choice_for_card(
         // sort ascending by distance (most similar first)
         candidates.sort_by_key(|(dist, _)| *dist);
 
-        for (distance, card) in candidates.into_iter().take(3 - chosen.len()) {
-            if !chosen.contains(&card) && distance != 0 {
-                chosen.push(card);
+        for (_, card) in candidates.into_iter().take(3 - chosen.len()) {
+            if !chosen.contains(&card) && c.different(&card) {
+                chosen.push(card); // only push cards with different terms AND definitions
             }
         }
     }

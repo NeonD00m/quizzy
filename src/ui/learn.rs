@@ -267,7 +267,7 @@ pub fn learn_mode(
     );
     stdout().flush().context("Failed to flush output.")?;
     if enter_input()? == KeyCode::Esc {
-        println!("Cancelled Lesson.");
+        println!("\nCancelled Lesson.");
         return Ok(());
     }
     println!();
@@ -319,15 +319,18 @@ pub fn learn_mode(
             };
             println!();
             let expected = if ask_term {
-                c.definition.clone()
+                c.definition.as_str()
             } else {
-                c.term.clone()
+                c.term.as_str()
             };
             // check if typed answer is close enough
             let is_right = (expected.len() as f64 * 0.3_f64)
-                > (string_distance(response.to_lowercase(), expected.to_lowercase()) as f64);
+                > (string_distance(
+                    response.to_lowercase().as_str(),
+                    expected.to_lowercase().as_str(),
+                ) as f64);
 
-            display_feedback(&response, &expected, is_right);
+            display_feedback(&response, expected, is_right);
 
             session_answered += 1;
             answer(

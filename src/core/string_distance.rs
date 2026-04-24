@@ -1,7 +1,7 @@
 use std::cmp::min;
 
 /// some judgement of how far off the strings are
-pub fn string_distance(given: String, expected: String) -> u8 {
+pub fn string_distance(given: &str, expected: &str) -> u8 {
     if given == expected {
         return 0;
     } else if given.is_empty() {

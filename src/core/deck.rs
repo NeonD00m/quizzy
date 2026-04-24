@@ -22,9 +22,14 @@ impl Card {
     }
 
     // Explict semantic comparison of cards' contents, ignoring id
-    // pub fn same(&self, other: &Card) -> bool {
-    //     self.term == other.term && self.definition == other.definition
-    // }
+    pub fn same(&self, other: &Card) -> bool {
+        self.term == other.term && self.definition == other.definition
+    }
+
+    // Explict semantic contrast of cards' contents, ignoring id
+    pub fn different(&self, other: &Card) -> bool {
+        self.term != other.term && self.definition != other.definition
+    }
 }
 
 pub struct Deck {
@@ -180,7 +185,7 @@ pub fn read_deck_from_file(path: PathBuf) -> anyhow::Result<Deck> {
 fn write_deck_csv(deck: &Deck, path: PathBuf) -> anyhow::Result<()> {
     let mut wtr = csv::Writer::from_path(path).context("Failed to create CSV writer.")?;
     for card in &deck.cards {
-        wtr.write_record(&[&card.term, &card.definition])
+        wtr.write_record([&card.term, &card.definition])
             .context("Failed to write CSV record.")?;
     }
     wtr.flush().context("Failed to flush CSV writer.")?;
@@ -193,7 +198,7 @@ fn write_deck_tsv(deck: &Deck, path: PathBuf) -> anyhow::Result<()> {
         .from_path(path)
         .context("Failed to create TSV writer.")?;
     for card in &deck.cards {
-        wtr.write_record(&[&card.term, &card.definition])
+        wtr.write_record([&card.term, &card.definition])
             .context("Failed to write TSV record.")?;
     }
     wtr.flush().context("Failed to flush TSV writer.")?;
