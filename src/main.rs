@@ -62,7 +62,11 @@ pub enum Command {
     /// Removes a card from a saved deck by term.
     Remove { deck: String, term: String },
     /// Clears all cards from a saved deck, but keeps the deck itself.
-    Clear { deck: String },
+    Clear {
+        deck: String,
+        #[arg(short, long)]
+        confirm: bool,
+    },
     /// Renames a saved deck.
     Rename { deck: String, new_name: String },
     /// Lists saved decks, or cards in a deck if a deck name is provided.
@@ -235,7 +239,7 @@ fn main() -> anyhow::Result<()> {
         } => ui::general::add(&mut storage, deck, term, definition),
         Command::Append { deck, source } => ui::general::append(&mut storage, deck, source),
         Command::Remove { deck, term } => ui::general::remove(&mut storage, deck, term),
-        Command::Clear { deck } => ui::general::clear(&mut storage, deck),
+        Command::Clear { deck, confirm } => ui::general::clear(&mut storage, deck, confirm),
         Command::Rename { deck, new_name } => ui::general::rename(&mut storage, deck, new_name),
         Command::List {
             deck,

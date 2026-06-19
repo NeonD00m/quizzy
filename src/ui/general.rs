@@ -126,26 +126,28 @@ pub fn delete(storage: &mut Storage, name: String) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn clear(storage: &mut Storage, deck_name: String) -> anyhow::Result<()> {
+pub fn clear(storage: &mut Storage, deck_name: String, confirm: bool) -> anyhow::Result<()> {
     match resolve_deck_source(deck_name.as_str()) {
         DeckSource::Named(name) => {
             if let Some(deck) = select_deck_by_name(storage, &name, "clear")? {
-                println!(
-                    "Are you sure you want to clear all cards from deck '{}'?",
-                    deck.name
-                );
-                print!("Press [ENTER] to confirm or [ESC] to cancel > ");
-                stdout().flush().context("Failed to flush output.")?;
-
-                if enter_input()? == KeyCode::Enter {
-                    storage.clear_deck(deck.id)?;
+                if !confirm {
                     println!(
-                        "\nSuccessfully cleared all cards from deck '{}'.",
+                        "Are you sure you want to clear all cards from deck '{}'?",
                         deck.name
                     );
-                } else {
-                    println!("\nClear cancelled.");
+                    print!("Press [ENTER] to confirm or [ESC] to cancel > ");
+                    stdout().flush().context("Failed to flush output.")?;
+
+                    if enter_input()? != KeyCode::Enter {
+                        println!("\nClear cancelled.");
+                        return Ok(());
+                    }
                 }
+                storage.clear_deck(deck.id)?;
+                println!(
+                    "\nSuccessfully cleared all cards from deck '{}'.",
+                    deck.name
+                );
             }
         }
         DeckSource::File(_) => {

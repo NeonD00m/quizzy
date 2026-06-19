@@ -1,0 +1,12 @@
+[
+  {
+    "text": "make agent skills for creating decks",
+    "completed": false,
+    "tags": []
+  },
+  {
+    "text": "add \recover command if possible, to recover cards after clear using the saved statistics",
+    "completed": false,
+    "tags": []
+  }
+]
