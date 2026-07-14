@@ -6,12 +6,12 @@
 
 A terminal-first, Quizlet-like flashcard tool written in Rust. Import decks (Quizlet JSON, simple JSON/CSV/TSV), study with multiple modes (cards, learn, gamble), and keep learning stats locally in SQLite.
 
-Why Quizzy?
+#### Why Quizzy?
 - Local-first: your decks and learning stats stay on your machine.
 - Multiple study modes: quick flashcards, an adaptive "learn" quiz mode, and a playful gamble/gauntlet mode.
-- Lightweight CLI written in Rust - good for learning and reducing bloat during when you have to be locked in.
+- Lightweight CLI written in Rust - good for learning and reducing *noise* when you have to be locked in.
 
-Features
+#### Features
 - Import from Quizlet JSON (helper included) or load TSV/CSV/JSON text files.
 - Save decks and per-card stats locally using SQLite (`rusqlite`).
 - Study modes:
@@ -22,7 +22,7 @@ Features
 - Platform-aware storage path via `dirs-next`.
 - Detects and offers to recover failed session files on startup.
 
-Quick install
+#### Quick install
 - Download prebuilt binaries from the Releases page:
   https://github.com/NeonD00m/quizzy/releases
 
@@ -39,7 +39,7 @@ cargo install --path .
 ./target/release/quizzy
 ```
 
-Quickstart examples
+#### Quickstart examples
 ```quizzy/README.md#L256-280
 # Create a new deck from a CSV
 quizzy new mydeck examples/worldCapitals.csv
@@ -56,23 +56,23 @@ quizzy cards mydeck --shuffle  # flashcard mode
 quizzy gamble mydeck           # play in the "study casino"
 ```
 
-Tutorial deck
-- A small tutorial deck is included in `examples/tutorial.csv`. To load and play it:
+#### Tutorial deck
+- Five tutorial decks are included in `examples/`. To load and play the tutorial:
 ```quizzy/README.md#L281-288
 quizzy new tutorial examples/tutorial.csv
 quizzy learn tutorial
 ```
 
-Importing from Quizlet
-- Quizzy currently supports the Quizlet web JSON format (see `src/core/import.rs`) and the companion `importing.md`.
+#### Importing from Quizlet
+- Quizzy currently supports the Quizlet web JSON format (see `src/core/import.rs` and the companion `importing.md`).
 - If Quizlet’s API changes, the helper will prompt you to save the browser JSON response and import from that file.
 
-Configuration and storage
+###### Configuration and storage
 - Data is stored in an SQLite DB located using `dirs-next` patient conventions (platform-specific).
 - The DB schema and storage logic live in `src/core/storage.rs`.
 - On startup Quizzy checks for unsaved/failed session files and can attempt to commit them to storage.
 
-Development
+###### Development
 - Formatting: `cargo fmt`
 - Linting: `cargo clippy`
 - Testing: `cargo test`
@@ -81,24 +81,17 @@ Development
 cargo fmt -- --check && cargo clippy --all-targets --all-features -- -D warnings && cargo test --workspace
 ```
 
-Repository badges
+###### Repository badges
 - The CI badge at the top references the Actions workflow at `.github/workflows/ci.yml`.
 - The Release badge comes from GitHub releases.
-- The License badge reflects the included `LICENSE` (MIT). This project is licensed under the MIT License — see `LICENSE` in the repo root.
+- The License badge reflects the included `LICENSE` (MIT). This project is licensed under the MIT License 
 
-Planned/available GitHub Actions
+###### Planned/available GitHub Actions
 - CI: run `cargo fmt -- --check`, `cargo clippy`, and `cargo test` on push/PR.
 - Release: on tag push (e.g. `v0.1.0`) build release binaries for Linux/macOS/Windows and attach zipped artifacts to the GitHub Release.
 (See `.github/workflows/ci.yml` and `.github/workflows/release.yml` in the repo for the actual workflows.)
 
-Contributing
+###### Contributing
 - Open issues or PRs - small improvements, importers, or bug fixes are welcome.
 - Please run the formatter and clippy before submitting PRs.
 - Add small example input files for new importers under `examples/`.
-
-License
-- This repository is licensed under the MIT License. See `LICENSE` for details.
-
-Contact
-- GitHub: https://github.com/NeonD00m/quizzy
-- If you want a feature, open an issue and tag it "feature request".

@@ -11,9 +11,7 @@ Replace `<quizlet-set-url>` with the actual URL of the Quizlet set you want to i
 `quizzy import` only works with json files formatted like the output from the generated Quizlet link, mixing up json formats between `quizzy import` and `quizzy new` will lead to errors.
 
 [!CAUTION]
-Decks with images may break the json parsing, if you encounter an issue please just notify me and send the api's json file so I can improve the parsing structs.
-
-
+Decks with images may break the json parsing (I think I fixed it though), if you encounter an issue notify me and send the api's json file so I can improve the parsing structs. (Or you could also try PR a fix)
 
 ### Creating a New Set from a File
 You can create a new flashcard set from various file types using the `quizzy new` command. The supported file types include:

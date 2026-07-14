@@ -1,12 +1,17 @@
 [
   {
-    "text": "make agent skills for creating decks",
+    "text": "add \\recover command if possible, to recover cards after clear using the saved statistics",
     "completed": false,
     "tags": []
   },
   {
-    "text": "add \recover command if possible, to recover cards after clear using the saved statistics",
+    "text": "publish to crates.io as binary",
     "completed": false,
+    "tags": []
+  },
+  {
+    "text": "see if MCP is a better way to go",
+    "completed": true,
     "tags": []
   }
 ]
