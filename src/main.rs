@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 mod core;
+mod mcp;
 mod ui;
 use crate::core::deck::{Deck, DeckSource, resolve_deck_source, write_deck_to_file};
 use crate::core::import::import_from_quizlet;
@@ -137,6 +138,10 @@ pub enum Command {
         /// Page size
         #[arg(short, long, default_value_t = 0)]
         page: u32,
+    },
+    /// Launches an MCP server for AI Agents to interact with Quizzy
+    MCP {
+        // Do I need any options?
     },
 }
 
@@ -312,5 +317,6 @@ fn main() -> anyhow::Result<()> {
             };
             stats_mode(deck_option, size, page, &mut storage)
         }
+        Command::MCP {} => mcp::server::launch(&mut storage),
     }
 }
