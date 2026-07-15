@@ -78,7 +78,6 @@ CREATE TABLE IF NOT EXISTS card_stats (
 );
 
 CREATE INDEX IF NOT EXISTS idx_card_stats_learning_score ON card_stats(learning_score);
-CREATE INDEX IF NOT EXISTS idx_card_stats_next_due ON card_stats(next_due);
 
 CREATE TABLE IF NOT EXISTS deck_stats (
     deck_id INTEGER PRIMARY KEY REFERENCES decks(id) ON DELETE CASCADE,
@@ -1052,6 +1051,12 @@ pub fn init_db(conn: &Connection) -> Result<()> {
                 .with_context(|| format!("Failed to add {} column to card_stats.", col))?;
         }
     }
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_card_stats_next_due ON card_stats(next_due);",
+        [],
+    )
+    .context("Failed to create index idx_card_stats_next_due")?;
 
     Ok(())
 }

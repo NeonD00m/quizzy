@@ -220,7 +220,9 @@ fn startup(storage: &mut Storage) -> anyhow::Result<()> {
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let mut storage = Storage::open_default()?;
-    startup(&mut storage)?;
+    if !matches!(cli.command, Command::MCP {}) {
+        startup(&mut storage)?;
+    }
     match cli.command {
         Command::Compare { s1, s2 } => {
             println!("String Distance: {}", string_distance(&s1, &s2));

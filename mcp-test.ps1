@@ -1,6 +1,6 @@
 # Config
-$USER_ID = "idk"
 $EXE_PATH = ".\target\release\quizzy.exe"
+$DB_PATH = "$env:LOCALAPPDATA\quizzy\quizzy.db"
 
 Write-Host "Running cargo build --release..." -ForegroundColor Cyan
 cargo build --release
@@ -11,6 +11,6 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
-Write-Host "Starting MCP Inspector with USER_ID=$USER_ID..." -ForegroundColor Cyan
-$env:USER_ID = USER_ID
-npx @modelcontextprotocol/inspector $EXE_PATH
+Write-Host "Starting MCP Inspector..." -ForegroundColor Cyan
+$env:QUIZZY_DB = $DB_PATH
+npx @modelcontextprotocol/inspector $EXE_PATH mcp
