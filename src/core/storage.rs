@@ -32,6 +32,7 @@ pub struct DeckListItem {
     pub name: String,
     pub created_at: i64,
     pub card_count: i64,
+    pub updated_at: i64,
 }
 
 pub type SessionDelta = (i64, i64, i64, Option<crate::core::learn::SM2Stats>);
@@ -347,7 +348,7 @@ impl Storage {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT d.id, d.name, d.created_at, COUNT(c.id)
+                "SELECT d.id, d.name, d.created_at, COUNT(c.id), d.updated_at
                  FROM decks d
                  LEFT JOIN cards c ON d.id = c.deck_id
                  GROUP BY d.id
@@ -361,6 +362,7 @@ impl Storage {
                     name: r.get(1)?,
                     created_at: r.get(2)?,
                     card_count: r.get(3)?,
+                    updated_at: r.get(4)?,
                 })
             })
             .context("Failed to query detailed decks.")?;

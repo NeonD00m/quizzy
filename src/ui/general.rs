@@ -279,14 +279,19 @@ pub fn list(
                 }
                 println!("{} decks found:", items.len());
                 for item in items {
-                    let date_str = Utc
+                    let create_str = Utc
                         .timestamp_opt(item.created_at, 0)
                         .single()
                         .map(|dt| dt.to_rfc3339())
                         .unwrap_or_else(|| "Never".to_string());
+                    let update_str = Utc
+                        .timestamp_opt(item.updated_at, 0)
+                        .single()
+                        .map(|dt| dt.to_rfc3339())
+                        .unwrap_or_else(|| "Never".to_string());
                     println!(
-                        "({})\t{}\t {} cards\t Created At: {}",
-                        item.id, item.name, item.card_count, date_str
+                        "({})\t{}\t {} cards\t Created At: {}\t Updated At: {}",
+                        item.id, item.name, item.card_count, create_str, update_str
                     );
                 }
             } else {

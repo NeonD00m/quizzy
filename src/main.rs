@@ -319,6 +319,6 @@ fn main() -> anyhow::Result<()> {
             };
             stats_mode(deck_option, size, page, &mut storage)
         }
-        Command::MCP {} => mcp::server::launch(&mut storage),
+        Command::MCP {} => mcp::server::launch(storage),
     }
 }
