@@ -1097,7 +1097,18 @@ pub fn init_db(conn: &Connection) -> Result<()> {
 
 pub fn get_deck(src: DeckSource, storage: &Storage) -> anyhow::Result<Deck> {
     match src {
-        DeckSource::Named(n) => storage.get_deck_by_name(&n),
+        DeckSource::Named(n) => {
+            // if n can be parsed from string into a number, then get deck by id, else get deck by name
+            if let Ok(deck_id) = n.parse::<i64>() {
+                storage
+                    .get_deck_by_id(deck_id)
+                    .context("Failed to get deck by id.")
+            } else {
+                storage
+                    .get_deck_by_name(&n)
+                    .context("Failed to get deck by name.")
+            }
+        }
         DeckSource::File(p) => read_deck_from_file(p),
     }
 }

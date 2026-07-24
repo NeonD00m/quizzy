@@ -303,7 +303,7 @@ fn main() -> anyhow::Result<()> {
             gauntlet_mode(deck, &mut storage)
         }
         Command::Delete { deck } => match resolve_deck_source(deck.as_str()) {
-            DeckSource::Named(name) => ui::general::delete(&mut storage, name),
+            DeckSource::Named(name_or_id) => ui::general::delete(&mut storage, name_or_id),
             DeckSource::File(_) => {
                 println!(
                     "Path specified; not deleting files. Use the deck name of a saved deck to delete from DB."

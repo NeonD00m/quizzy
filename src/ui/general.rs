@@ -9,17 +9,17 @@ use std::io::{Write, stdout};
 /// Helper to select a deck by name. If multiple exist, prompts the user.
 fn select_deck_by_name(
     storage: &Storage,
-    name: &str,
+    name_or_id: &str,
     action_verb: &str,
 ) -> anyhow::Result<Option<DeckListItem>> {
     let mut matches: Vec<_> = storage
         .list_decks_detailed()?
         .into_iter()
-        .filter(|item| item.name == name)
+        .filter(|item| item.name == name_or_id || name_or_id.parse::<i64>().ok() == Some(item.id))
         .collect();
 
     if matches.is_empty() {
-        println!("No decks found by the name '{}'.", name);
+        println!("No decks found by the name '{}'.", name_or_id);
         return Ok(None);
     }
 
@@ -27,7 +27,7 @@ fn select_deck_by_name(
         return Ok(Some(matches.remove(0)));
     }
 
-    println!("Found the following decks with the name '{}':", name);
+    println!("Found the following decks with the name '{}':", name_or_id);
     for item in &matches {
         let date_str = Utc
             .timestamp_opt(item.created_at, 0)
@@ -66,8 +66,8 @@ pub fn add(
     definition: String,
 ) -> anyhow::Result<()> {
     match resolve_deck_source(deck_name.as_str()) {
-        DeckSource::Named(name) => {
-            if let Some(deck) = select_deck_by_name(storage, &name, "add to")? {
+        DeckSource::Named(name_or_id) => {
+            if let Some(deck) = select_deck_by_name(storage, &name_or_id, "add to")? {
                 storage.add_card_to_deck(deck.id, &term, &definition)?;
                 println!("Added card to deck '{}'", deck.name);
             }
@@ -82,8 +82,8 @@ pub fn add(
 // TODO: make it so that the deck selection function is more flexible and use it for choosing terms
 pub fn remove(storage: &mut Storage, deck_name: String, term: String) -> anyhow::Result<()> {
     match resolve_deck_source(deck_name.as_str()) {
-        DeckSource::Named(name) => {
-            if let Some(deck_info) = select_deck_by_name(storage, &name, "remove from")? {
+        DeckSource::Named(name_or_id) => {
+            if let Some(deck_info) = select_deck_by_name(storage, &name_or_id, "remove from")? {
                 let deck = storage.get_deck_by_id(deck_info.id)?;
                 // find card id
                 if let Some((card_id, _, _)) = deck
@@ -109,7 +109,10 @@ pub fn remove(storage: &mut Storage, deck_name: String, term: String) -> anyhow:
 
 pub fn delete(storage: &mut Storage, name: String) -> anyhow::Result<()> {
     if let Some(info) = select_deck_by_name(storage, &name, "delete")? {
-        println!("Are you sure you want to delete this deck and all its associated stats?");
+        println!(
+            "Are you sure you want to delete deck '{}' and all its associated stats?",
+            info.name
+        );
         print!("Press [ENTER] to confirm deletion or [ESC] to cancel > ");
         stdout().flush().context("Failed to flush output.")?;
 
@@ -128,8 +131,8 @@ pub fn delete(storage: &mut Storage, name: String) -> anyhow::Result<()> {
 
 pub fn clear(storage: &mut Storage, deck_name: String, confirm: bool) -> anyhow::Result<()> {
     match resolve_deck_source(deck_name.as_str()) {
-        DeckSource::Named(name) => {
-            if let Some(deck) = select_deck_by_name(storage, &name, "clear")? {
+        DeckSource::Named(name_or_id) => {
+            if let Some(deck) = select_deck_by_name(storage, &name_or_id, "clear")? {
                 if !confirm {
                     println!(
                         "Are you sure you want to clear all cards from deck '{}'?",
@@ -205,7 +208,7 @@ pub fn new(storage: &mut Storage, name: String, source_arg: Option<String>) -> a
 
 pub fn append(storage: &mut Storage, deck_name: String, source_arg: String) -> anyhow::Result<()> {
     let target_deck = match resolve_deck_source(deck_name.as_str()) {
-        DeckSource::Named(name) => select_deck_by_name(storage, &name, "append to")?,
+        DeckSource::Named(name_or_id) => select_deck_by_name(storage, &name_or_id, "append to")?,
         DeckSource::File(_) => {
             println!(
                 "Cannot append to a file-backed deck directly. Save it to the database first."
@@ -220,8 +223,9 @@ pub fn append(storage: &mut Storage, deck_name: String, source_arg: String) -> a
                 println!("Reading cards from file {}...", path.display());
                 crate::core::deck::read_deck_from_file(path)?.cards
             }
-            DeckSource::Named(name) => {
-                if let Some(source_info) = select_deck_by_name(storage, &name, "append from")? {
+            DeckSource::Named(name_or_id) => {
+                if let Some(source_info) = select_deck_by_name(storage, &name_or_id, "append from")?
+                {
                     println!("Reading cards from deck '{}'...", source_info.name);
                     storage.get_deck_by_id(source_info.id)?.cards
                 } else {
@@ -252,11 +256,10 @@ pub fn list(
     verbose: bool,
 ) -> anyhow::Result<()> {
     match deck {
-        Some(name) => {
+        Some(name_or_id) => {
             // println!("Listing out cards in deck: {}", name);
-            let mut cards = get_deck(resolve_deck_source(name.as_str()), storage)?
-                .cards
-                .clone();
+            let deck = get_deck(resolve_deck_source(name_or_id.as_str()), storage)?;
+            let mut cards = deck.cards.clone();
             if let Some(search_str) = search {
                 let search_lower = search_str.to_lowercase();
                 cards.retain(|c| {
@@ -264,7 +267,7 @@ pub fn list(
                         || c.definition.to_lowercase().contains(&search_lower)
                 });
             }
-            println!("{} cards found in deck '{}':", cards.len(), name);
+            println!("{} cards found in deck '{}':", cards.len(), deck.name);
             if verbose {
                 for c in cards {
                     println!(
