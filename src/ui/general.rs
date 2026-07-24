@@ -265,8 +265,20 @@ pub fn list(
                 });
             }
             println!("{} cards found in deck '{}':", cards.len(), name);
-            for c in cards {
-                println!("{} -> {}", c.term, c.definition)
+            if verbose {
+                for c in cards {
+                    println!(
+                        "(ID: {}) {} -> {}",
+                        c.id.map(|id| id.to_string())
+                            .unwrap_or_else(|| "X".to_string()),
+                        c.term,
+                        c.definition
+                    )
+                }
+            } else {
+                for c in cards {
+                    println!("{} -> {}", c.term, c.definition)
+                }
             }
             Ok(())
         }
@@ -290,7 +302,7 @@ pub fn list(
                         .map(|dt| dt.to_rfc3339())
                         .unwrap_or_else(|| "Never".to_string());
                     println!(
-                        "({})\t{}\t {} cards\t Created At: {}\t Updated At: {}",
+                        "(ID: {})\t{}\t {} cards\t Created At: {}\t Updated At: {}",
                         item.id, item.name, item.card_count, create_str, update_str
                     );
                 }
