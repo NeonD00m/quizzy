@@ -983,7 +983,35 @@ impl Storage {
         }
         Ok(out)
     }
+
+    /// Update a card's term and/or definition
+    pub fn update_card(&mut self, card_id: i64, term: Option<&str>, definition: Option<&str>) -> Result<()> {
+        let now = now_secs();
+        match (term, definition) {
+            (Some(t), Some(d)) => {
+                self.conn.execute(
+                    "UPDATE cards SET term = ?1, definition = ?2, updated_at = ?3 WHERE id = ?4",
+                    params![t, d, now, card_id],
+                )?;
+            }
+            (Some(t), None) => {
+                self.conn.execute(
+                    "UPDATE cards SET term = ?1, updated_at = ?2 WHERE id = ?3",
+                    params![t, now, card_id],
+                )?;
+            }
+            (None, Some(d)) => {
+                self.conn.execute(
+                    "UPDATE cards SET definition = ?1, updated_at = ?2 WHERE id = ?3",
+                    params![d, now, card_id],
+                )?;
+            }
+            (None, None) => {}
+        }
+        Ok(())
+    }
 }
+
 
 /// Initialize the database connection: pragmas and schema
 pub fn init_db(conn: &Connection) -> Result<()> {
