@@ -90,10 +90,18 @@ pub fn choice_input() -> anyhow::Result<KeyCode> {
         if trimmed == "q" || trimmed == "exit" || trimmed == "esc" {
             return Ok(KeyCode::Esc);
         }
-        if trimmed == "1" { return Ok(KeyCode::Char('1')); }
-        if trimmed == "2" { return Ok(KeyCode::Char('2')); }
-        if trimmed == "3" { return Ok(KeyCode::Char('3')); }
-        if trimmed == "4" { return Ok(KeyCode::Char('4')); }
+        if trimmed == "1" {
+            return Ok(KeyCode::Char('1'));
+        }
+        if trimmed == "2" {
+            return Ok(KeyCode::Char('2'));
+        }
+        if trimmed == "3" {
+            return Ok(KeyCode::Char('3'));
+        }
+        if trimmed == "4" {
+            return Ok(KeyCode::Char('4'));
+        }
         return Ok(KeyCode::Esc);
     }
 

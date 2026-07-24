@@ -985,7 +985,12 @@ impl Storage {
     }
 
     /// Update a card's term and/or definition
-    pub fn update_card(&mut self, card_id: i64, term: Option<&str>, definition: Option<&str>) -> Result<()> {
+    pub fn update_card(
+        &mut self,
+        card_id: i64,
+        term: Option<&str>,
+        definition: Option<&str>,
+    ) -> Result<()> {
         let now = now_secs();
         match (term, definition) {
             (Some(t), Some(d)) => {
@@ -1011,7 +1016,6 @@ impl Storage {
         Ok(())
     }
 }
-
 
 /// Initialize the database connection: pragmas and schema
 pub fn init_db(conn: &Connection) -> Result<()> {

@@ -70,6 +70,7 @@ pub struct RenameDeckRequest {
 
 #[derive(Clone)]
 pub struct McpServer {
+    #[allow(dead_code)]
     tool_router: ToolRouter<Self>, // This is a required field
     storage: Arc<tokio::sync::Mutex<Storage>>,
 }
@@ -91,12 +92,10 @@ impl McpServer {
         tracing::info!("list_decks: called with search: {:?}", params.0.search);
         let storage = self.storage.lock().await;
         tracing::debug!("list_decks: storage lock acquired");
-        let mut items = storage
-            .list_decks_detailed()
-            .map_err(|e| {
-                tracing::error!("list_decks: database error: {:?}", e);
-                McpError::internal_error(format!("Error listing decks: {}", e), None)
-            })?;
+        let mut items = storage.list_decks_detailed().map_err(|e| {
+            tracing::error!("list_decks: database error: {:?}", e);
+            McpError::internal_error(format!("Error listing decks: {}", e), None)
+        })?;
 
         if let Some(search_str) = &params.0.search {
             let search_lower = search_str.to_lowercase();
@@ -144,7 +143,12 @@ impl McpServer {
         params: Parameters<GetDeckCardsRequest>,
     ) -> Result<CallToolResult, McpError> {
         let req = params.0;
-        tracing::info!("get_deck_cards: called for deck_id = {}, limit = {:?}, offset = {:?}", req.deck_id, req.limit, req.offset);
+        tracing::info!(
+            "get_deck_cards: called for deck_id = {}, limit = {:?}, offset = {:?}",
+            req.deck_id,
+            req.limit,
+            req.offset
+        );
         let storage = self.storage.lock().await;
         tracing::debug!("get_deck_cards: storage lock acquired");
         let limit_val = req.limit.unwrap_or(50);
@@ -256,7 +260,11 @@ impl McpServer {
                 McpError::internal_error(format!("Failed to create deck '{}': {}", name, e), None)
             })?;
 
-        tracing::info!("create_deck: successfully created deck '{}' with ID = {}", name, new_id);
+        tracing::info!(
+            "create_deck: successfully created deck '{}' with ID = {}",
+            name,
+            new_id
+        );
         Ok(CallToolResult::success(vec![ContentBlock::text(format!(
             "Successfully created deck '{}' with ID: {}",
             name, new_id
@@ -269,7 +277,11 @@ impl McpServer {
         params: Parameters<AddCardsRequest>,
     ) -> Result<CallToolResult, McpError> {
         let req = params.0;
-        tracing::info!("add_cards: called for deck_id = {} with {} card(s)", req.deck_id, req.cards.len());
+        tracing::info!(
+            "add_cards: called for deck_id = {} with {} card(s)",
+            req.deck_id,
+            req.cards.len()
+        );
         let mut storage = self.storage.lock().await;
         tracing::debug!("add_cards: storage lock acquired");
 
@@ -300,7 +312,11 @@ impl McpServer {
                 McpError::internal_error(format!("Failed to add cards: {}", e), None)
             })?;
 
-        tracing::info!("add_cards: successfully added {} card(s) to deck {}", count, req.deck_id);
+        tracing::info!(
+            "add_cards: successfully added {} card(s) to deck {}",
+            count,
+            req.deck_id
+        );
         Ok(CallToolResult::success(vec![ContentBlock::text(format!(
             "Successfully added {} card(s) to deck ID: {}",
             count, req.deck_id
@@ -322,7 +338,11 @@ impl McpServer {
         let count = card_ids.len();
         for id in &card_ids {
             storage.remove_card(*id).map_err(|e| {
-                tracing::error!("remove_cards: database error removing card ID {}: {:?}", id, e);
+                tracing::error!(
+                    "remove_cards: database error removing card ID {}: {:?}",
+                    id,
+                    e
+                );
                 McpError::internal_error(
                     format!("Failed to remove card with ID {}: {}", id, e),
                     None,
@@ -345,7 +365,12 @@ impl McpServer {
         params: Parameters<EditCardRequest>,
     ) -> Result<CallToolResult, McpError> {
         let req = params.0;
-        tracing::info!("edit_card: called for card_id = {} with term = {:?}, definition = {:?}", req.card_id, req.term, req.definition);
+        tracing::info!(
+            "edit_card: called for card_id = {} with term = {:?}, definition = {:?}",
+            req.card_id,
+            req.term,
+            req.definition
+        );
         let mut storage = self.storage.lock().await;
         tracing::debug!("edit_card: storage lock acquired");
 
@@ -380,7 +405,11 @@ impl McpServer {
         params: Parameters<RenameDeckRequest>,
     ) -> Result<CallToolResult, McpError> {
         let req = params.0;
-        tracing::info!("rename_deck: called for deck_id = {} to new_name = '{}'", req.deck_id, req.new_name);
+        tracing::info!(
+            "rename_deck: called for deck_id = {} to new_name = '{}'",
+            req.deck_id,
+            req.new_name
+        );
         let mut storage = self.storage.lock().await;
         tracing::debug!("rename_deck: storage lock acquired");
 
@@ -394,7 +423,11 @@ impl McpServer {
                 )
             })?;
 
-        tracing::info!("rename_deck: successfully renamed deck ID {} to '{}'", req.deck_id, req.new_name);
+        tracing::info!(
+            "rename_deck: successfully renamed deck ID {} to '{}'",
+            req.deck_id,
+            req.new_name
+        );
         Ok(CallToolResult::success(vec![ContentBlock::text(format!(
             "Successfully renamed deck ID {} to '{}'.",
             req.deck_id, req.new_name
