@@ -1,0 +1,22 @@
+[
+  {
+    "text": "publish to crates.io as binary",
+    "completed": false,
+    "tags": []
+  },
+  {
+    "text": "see if MCP is a better way to go",
+    "completed": true,
+    "tags": []
+  },
+  {
+    "text": "let cli users reference decks by id if they type a number in",
+    "completed": false,
+    "tags": []
+  },
+  {
+    "text": "edit card command",
+    "completed": false,
+    "tags": []
+  }
+]

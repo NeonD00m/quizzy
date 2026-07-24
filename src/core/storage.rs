@@ -32,6 +32,7 @@ pub struct DeckListItem {
     pub name: String,
     pub created_at: i64,
     pub card_count: i64,
+    pub updated_at: i64,
 }
 
 pub type SessionDelta = (i64, i64, i64, Option<crate::core::learn::SM2Stats>);
@@ -78,7 +79,6 @@ CREATE TABLE IF NOT EXISTS card_stats (
 );
 
 CREATE INDEX IF NOT EXISTS idx_card_stats_learning_score ON card_stats(learning_score);
-CREATE INDEX IF NOT EXISTS idx_card_stats_next_due ON card_stats(next_due);
 
 CREATE TABLE IF NOT EXISTS deck_stats (
     deck_id INTEGER PRIMARY KEY REFERENCES decks(id) ON DELETE CASCADE,
@@ -348,7 +348,7 @@ impl Storage {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT d.id, d.name, d.created_at, COUNT(c.id)
+                "SELECT d.id, d.name, d.created_at, COUNT(c.id), d.updated_at
                  FROM decks d
                  LEFT JOIN cards c ON d.id = c.deck_id
                  GROUP BY d.id
@@ -362,6 +362,7 @@ impl Storage {
                     name: r.get(1)?,
                     created_at: r.get(2)?,
                     card_count: r.get(3)?,
+                    updated_at: r.get(4)?,
                 })
             })
             .context("Failed to query detailed decks.")?;
@@ -982,6 +983,38 @@ impl Storage {
         }
         Ok(out)
     }
+
+    /// Update a card's term and/or definition
+    pub fn update_card(
+        &mut self,
+        card_id: i64,
+        term: Option<&str>,
+        definition: Option<&str>,
+    ) -> Result<()> {
+        let now = now_secs();
+        match (term, definition) {
+            (Some(t), Some(d)) => {
+                self.conn.execute(
+                    "UPDATE cards SET term = ?1, definition = ?2, updated_at = ?3 WHERE id = ?4",
+                    params![t, d, now, card_id],
+                )?;
+            }
+            (Some(t), None) => {
+                self.conn.execute(
+                    "UPDATE cards SET term = ?1, updated_at = ?2 WHERE id = ?3",
+                    params![t, now, card_id],
+                )?;
+            }
+            (None, Some(d)) => {
+                self.conn.execute(
+                    "UPDATE cards SET definition = ?1, updated_at = ?2 WHERE id = ?3",
+                    params![d, now, card_id],
+                )?;
+            }
+            (None, None) => {}
+        }
+        Ok(())
+    }
 }
 
 /// Initialize the database connection: pragmas and schema
@@ -1052,6 +1085,12 @@ pub fn init_db(conn: &Connection) -> Result<()> {
                 .with_context(|| format!("Failed to add {} column to card_stats.", col))?;
         }
     }
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_card_stats_next_due ON card_stats(next_due);",
+        [],
+    )
+    .context("Failed to create index idx_card_stats_next_due")?;
 
     Ok(())
 }

@@ -126,26 +126,28 @@ pub fn delete(storage: &mut Storage, name: String) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn clear(storage: &mut Storage, deck_name: String) -> anyhow::Result<()> {
+pub fn clear(storage: &mut Storage, deck_name: String, confirm: bool) -> anyhow::Result<()> {
     match resolve_deck_source(deck_name.as_str()) {
         DeckSource::Named(name) => {
             if let Some(deck) = select_deck_by_name(storage, &name, "clear")? {
-                println!(
-                    "Are you sure you want to clear all cards from deck '{}'?",
-                    deck.name
-                );
-                print!("Press [ENTER] to confirm or [ESC] to cancel > ");
-                stdout().flush().context("Failed to flush output.")?;
-
-                if enter_input()? == KeyCode::Enter {
-                    storage.clear_deck(deck.id)?;
+                if !confirm {
                     println!(
-                        "\nSuccessfully cleared all cards from deck '{}'.",
+                        "Are you sure you want to clear all cards from deck '{}'?",
                         deck.name
                     );
-                } else {
-                    println!("\nClear cancelled.");
+                    print!("Press [ENTER] to confirm or [ESC] to cancel > ");
+                    stdout().flush().context("Failed to flush output.")?;
+
+                    if enter_input()? != KeyCode::Enter {
+                        println!("\nClear cancelled.");
+                        return Ok(());
+                    }
                 }
+                storage.clear_deck(deck.id)?;
+                println!(
+                    "\nSuccessfully cleared all cards from deck '{}'.",
+                    deck.name
+                );
             }
         }
         DeckSource::File(_) => {
@@ -263,8 +265,20 @@ pub fn list(
                 });
             }
             println!("{} cards found in deck '{}':", cards.len(), name);
-            for c in cards {
-                println!("{} -> {}", c.term, c.definition)
+            if verbose {
+                for c in cards {
+                    println!(
+                        "(ID: {}) {} -> {}",
+                        c.id.map(|id| id.to_string())
+                            .unwrap_or_else(|| "X".to_string()),
+                        c.term,
+                        c.definition
+                    )
+                }
+            } else {
+                for c in cards {
+                    println!("{} -> {}", c.term, c.definition)
+                }
             }
             Ok(())
         }
@@ -277,14 +291,19 @@ pub fn list(
                 }
                 println!("{} decks found:", items.len());
                 for item in items {
-                    let date_str = Utc
+                    let create_str = Utc
                         .timestamp_opt(item.created_at, 0)
                         .single()
                         .map(|dt| dt.to_rfc3339())
                         .unwrap_or_else(|| "Never".to_string());
+                    let update_str = Utc
+                        .timestamp_opt(item.updated_at, 0)
+                        .single()
+                        .map(|dt| dt.to_rfc3339())
+                        .unwrap_or_else(|| "Never".to_string());
                     println!(
-                        "({})\t{}\t {} cards\t Created At: {}",
-                        item.id, item.name, item.card_count, date_str
+                        "(ID: {})\t{}\t {} cards\t Created At: {}\t Updated At: {}",
+                        item.id, item.name, item.card_count, create_str, update_str
                     );
                 }
             } else {

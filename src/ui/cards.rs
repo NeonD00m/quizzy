@@ -82,7 +82,7 @@ pub fn cards_mode(deck: Deck, shuffle: bool) -> anyhow::Result<()> {
             KeyCode::Char(' ') => {
                 flipped = !flipped;
             }
-            KeyCode::Left => {
+            KeyCode::Left | KeyCode::Char('a') | KeyCode::Char('A') => {
                 if index > 0 {
                     index -= 1;
                     flipped = false;
@@ -90,7 +90,7 @@ pub fn cards_mode(deck: Deck, shuffle: bool) -> anyhow::Result<()> {
                     println!("No previous card!");
                 }
             }
-            KeyCode::Right => {
+            KeyCode::Right | KeyCode::Char('d') | KeyCode::Char('D') => {
                 index += 1;
                 flipped = false;
             }

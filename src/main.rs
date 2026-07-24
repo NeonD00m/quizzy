@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 mod core;
+mod mcp;
 mod ui;
 use crate::core::deck::{Deck, DeckSource, resolve_deck_source, write_deck_to_file};
 use crate::core::import::import_from_quizlet;
@@ -62,7 +63,11 @@ pub enum Command {
     /// Removes a card from a saved deck by term.
     Remove { deck: String, term: String },
     /// Clears all cards from a saved deck, but keeps the deck itself.
-    Clear { deck: String },
+    Clear {
+        deck: String,
+        #[arg(short, long)]
+        confirm: bool,
+    },
     /// Renames a saved deck.
     Rename { deck: String, new_name: String },
     /// Lists saved decks, or cards in a deck if a deck name is provided.
@@ -133,6 +138,10 @@ pub enum Command {
         /// Page size
         #[arg(short, long, default_value_t = 0)]
         page: u32,
+    },
+    /// Launches an MCP server for AI Agents to interact with Quizzy
+    MCP {
+        // Do I need any options?
     },
 }
 
@@ -211,7 +220,9 @@ fn startup(storage: &mut Storage) -> anyhow::Result<()> {
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let mut storage = Storage::open_default()?;
-    startup(&mut storage)?;
+    if !matches!(cli.command, Command::MCP {}) {
+        startup(&mut storage)?;
+    }
     match cli.command {
         Command::Compare { s1, s2 } => {
             println!("String Distance: {}", string_distance(&s1, &s2));
@@ -235,7 +246,7 @@ fn main() -> anyhow::Result<()> {
         } => ui::general::add(&mut storage, deck, term, definition),
         Command::Append { deck, source } => ui::general::append(&mut storage, deck, source),
         Command::Remove { deck, term } => ui::general::remove(&mut storage, deck, term),
-        Command::Clear { deck } => ui::general::clear(&mut storage, deck),
+        Command::Clear { deck, confirm } => ui::general::clear(&mut storage, deck, confirm),
         Command::Rename { deck, new_name } => ui::general::rename(&mut storage, deck, new_name),
         Command::List {
             deck,
@@ -308,5 +319,6 @@ fn main() -> anyhow::Result<()> {
             };
             stats_mode(deck_option, size, page, &mut storage)
         }
+        Command::MCP {} => mcp::server::launch(storage),
     }
 }
