@@ -29,6 +29,27 @@ impl Drop for RawModeGuard {
 }
 
 pub fn cards_input() -> KeyCode {
+    if !std::io::stdin().is_terminal() {
+        let mut input = String::new();
+        if std::io::stdin().read_line(&mut input).is_err() {
+            return KeyCode::Esc;
+        }
+        let trimmed = input.trim().to_lowercase();
+        if trimmed == "q" || trimmed == "exit" || trimmed == "quit" || trimmed == "esc" {
+            return KeyCode::Esc;
+        }
+        if trimmed == "a" || trimmed == "left" || trimmed == "prev" {
+            return KeyCode::Left;
+        }
+        if trimmed == "d" || trimmed == "right" || trimmed == "next" {
+            return KeyCode::Right;
+        }
+        if trimmed == " " || trimmed == "space" || trimmed == "flip" {
+            return KeyCode::Char(' ');
+        }
+        return KeyCode::Enter;
+    }
+
     let _guard = RawModeGuard::new();
     while let Ok(event) = read() {
         let Some(event) = event.as_key_press_event() else {
@@ -62,6 +83,20 @@ pub fn cards_input() -> KeyCode {
 }
 
 pub fn choice_input() -> anyhow::Result<KeyCode> {
+    if !std::io::stdin().is_terminal() {
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        let trimmed = input.trim();
+        if trimmed == "q" || trimmed == "exit" || trimmed == "esc" {
+            return Ok(KeyCode::Esc);
+        }
+        if trimmed == "1" { return Ok(KeyCode::Char('1')); }
+        if trimmed == "2" { return Ok(KeyCode::Char('2')); }
+        if trimmed == "3" { return Ok(KeyCode::Char('3')); }
+        if trimmed == "4" { return Ok(KeyCode::Char('4')); }
+        return Ok(KeyCode::Esc);
+    }
+
     let _guard = RawModeGuard::new();
     while let Ok(event) = read() {
         let Some(event) = event.as_key_press_event() else {
@@ -91,6 +126,16 @@ pub fn choice_input() -> anyhow::Result<KeyCode> {
 }
 
 pub fn enter_input() -> anyhow::Result<KeyCode> {
+    if !std::io::stdin().is_terminal() {
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        let trimmed = input.trim().to_lowercase();
+        if trimmed == "q" || trimmed == "exit" || trimmed == "quit" || trimmed == "esc" {
+            return Ok(KeyCode::Esc);
+        }
+        return Ok(KeyCode::Enter);
+    }
+
     let _guard = RawModeGuard::new();
     while let Ok(event) = read() {
         let Some(event) = event.as_key_press_event() else {
@@ -117,6 +162,31 @@ pub enum RoundAction {
 }
 
 pub fn read_input_with_fuse(allowed_seconds: u64, prefix: &str) -> anyhow::Result<RoundAction> {
+    if !std::io::stdin().is_terminal() {
+        print!("{}> ", prefix);
+        stdout().flush()?;
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        let trimmed = input.trim().to_uppercase();
+        if trimmed == "DOUBLE" {
+            return Ok(RoundAction::Double);
+        } else if trimmed == "BANK" {
+            return Ok(RoundAction::Bank);
+        } else if trimmed == "EXIT" || trimmed == "ESC" || trimmed == "Q" {
+            return Ok(RoundAction::Exit);
+        } else if trimmed.starts_with('1') {
+            return Ok(RoundAction::Answer('1'));
+        } else if trimmed.starts_with('2') {
+            return Ok(RoundAction::Answer('2'));
+        } else if trimmed.starts_with('3') {
+            return Ok(RoundAction::Answer('3'));
+        } else if trimmed.starts_with('4') {
+            return Ok(RoundAction::Answer('4'));
+        } else {
+            return Ok(RoundAction::Exit);
+        }
+    }
+
     let input_prefix = format!("{}> ", prefix);
     let mut stdout = stdout();
     let start_time = Instant::now();
@@ -219,6 +289,18 @@ pub fn read_input_with_fuse(allowed_seconds: u64, prefix: &str) -> anyhow::Resul
 
 /// `prefix` CANNOT HAVE new line characters
 pub fn type_input(prefix: &str) -> anyhow::Result<Option<String>> {
+    if !std::io::stdin().is_terminal() {
+        print!("{}> ", prefix);
+        stdout().flush()?;
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        let trimmed = input.trim();
+        if trimmed.to_lowercase() == "esc" || trimmed.to_lowercase() == "exit" {
+            return Ok(None);
+        }
+        return Ok(Some(trimmed.to_string()));
+    }
+
     let input_prefix = format!("{}> ", prefix);
     let mut stdout = stdout();
     let mut input_buffer = String::new();
@@ -282,6 +364,33 @@ pub enum StatsInput {
 /// KeyCode::Esc signals quit, KeyCode::BackTab signals to go back
 /// `prefix` CANNOT HAVE new line characters
 pub fn stats_input(prefix: &str) -> anyhow::Result<StatsInput> {
+    if !std::io::stdin().is_terminal() {
+        print!("{}> ", prefix);
+        stdout().flush()?;
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        let trimmed = input.trim().to_lowercase();
+        if trimmed == "q" || trimmed == "exit" {
+            return Ok(StatsInput::Exit);
+        }
+        if trimmed == "u" || trimmed == "up" {
+            return Ok(StatsInput::Up);
+        }
+        if trimmed == "d" || trimmed == "down" {
+            return Ok(StatsInput::Down);
+        }
+        if trimmed == "b" || trimmed == "back" || trimmed == "esc" {
+            return Ok(StatsInput::Back);
+        }
+        if trimmed.is_empty() {
+            return Ok(StatsInput::Confirm);
+        }
+        if let Ok(idx) = trimmed.parse::<u32>() {
+            return Ok(StatsInput::Index(idx));
+        }
+        return Ok(StatsInput::Confirm);
+    }
+
     let input_prefix = format!("{}> ", prefix);
     let mut stdout = stdout();
     let mut input_buffer: u32 = 0;
