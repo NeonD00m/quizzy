@@ -40,39 +40,58 @@ pub enum Command {
         // using url requires browser available, json can be used directly
         url_or_json: Option<String>,
     },
-    /// Writes a deck (by name or file path) to a file in the current directory.
+    /// Writes a deck (by name, deck id, or file path) to a file in the current directory.
     ///
-    /// Writes a deck (by name or file path) to a file in the current directory. The file type is determined by the extension you provide (e.g. csv, tsv, json). If the file already exists, it will be overwritten.
+    /// Writes a deck (by name, deck id, or file path) to a file in the current directory. The file type is determined by the extension you provide (e.g. csv, tsv, json). If the file already exists, it will be overwritten.
     Export {
         name: String,
         /// Destination file path (e.g. deck.csv, output.json)
         file_path: PathBuf,
     },
-    /// Adds a new card to a saved deck.
+    /// Adds a new card to a saved deck (name or deck id).
     Add {
         deck: String,
         term: String,
         definition: String,
     },
-    /// Adds terms and definitions from a file or another deck to a saved deck.
+    /// Adds terms and definitions from a file or another deck to a saved deck (name or deck id).
     Append {
         deck: String,
         /// Source to import from (e.g. new_cards.csv or "Spanish Phrases")
         source: String,
     },
-    /// Removes a card from a saved deck by term.
-    Remove { deck: String, term: String },
-    /// Clears all cards from a saved deck, but keeps the deck itself.
+    /// Removes a card from a saved deck (name or deck id) by term or card id.
+    Remove {
+        deck: String,
+        term_or_card_id: String,
+    },
+    /// Clears all cards from a saved deck (name or deck id), but keeps the deck itself.
     Clear {
         deck: String,
         #[arg(short, long)]
         confirm: bool,
     },
-    /// Renames a saved deck.
+    /// Renames a saved deck (name or deck id).
     Rename { deck: String, new_name: String },
-    /// Lists saved decks, or cards in a deck if a deck name is provided.
+    /// Edits the contents of a card's term or definition.
     ///
-    /// Lists saved decks, or cards in a deck if a deck name is provided. Use -v/--verbose for card counts and creation dates when listing decks.
+    /// Edits the contents of a card's term or definition. Use `-t="new term"` or `-d="new definition"` to specify arguments.
+    Edit {
+        deck: String,
+
+        term_or_card_id: String,
+
+        /// Rewrite the term for the card.
+        #[arg(short, long)]
+        term: Option<String>,
+
+        /// Rewrite the definition for the card.
+        #[arg(short, long)]
+        definition: Option<String>,
+    },
+    /// Lists saved decks, or cards in a deck if a deck name or deck id is provided.
+    ///
+    /// Lists saved decks, or cards in a deck if a deck name or deck id is provided. Use -v/--verbose for card counts and creation dates when listing decks.
     List {
         deck: Option<String>,
 
@@ -140,9 +159,7 @@ pub enum Command {
         page: u32,
     },
     /// Launches an MCP server for AI Agents to interact with Quizzy
-    MCP {
-        // Do I need any options?
-    },
+    MCP {},
 }
 
 fn startup(storage: &mut Storage) -> anyhow::Result<()> {
@@ -245,9 +262,18 @@ fn main() -> anyhow::Result<()> {
             definition,
         } => ui::general::add(&mut storage, deck, term, definition),
         Command::Append { deck, source } => ui::general::append(&mut storage, deck, source),
-        Command::Remove { deck, term } => ui::general::remove(&mut storage, deck, term),
+        Command::Remove {
+            deck,
+            term_or_card_id,
+        } => ui::general::remove(&mut storage, deck, term_or_card_id),
         Command::Clear { deck, confirm } => ui::general::clear(&mut storage, deck, confirm),
         Command::Rename { deck, new_name } => ui::general::rename(&mut storage, deck, new_name),
+        Command::Edit {
+            deck,
+            term_or_card_id,
+            term,
+            definition,
+        } => ui::general::edit(&mut storage, deck, term_or_card_id, term, definition),
         Command::List {
             deck,
             search,

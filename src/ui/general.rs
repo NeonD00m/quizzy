@@ -123,6 +123,52 @@ pub fn remove(storage: &mut Storage, deck_name: String, term_or_id: String) -> a
     Ok(())
 }
 
+pub fn edit(
+    storage: &mut Storage,
+    deck_name: String,
+    term_or_id: String,
+    new_term: Option<String>,
+    new_definition: Option<String>,
+) -> anyhow::Result<()> {
+    match resolve_deck_source(deck_name.as_str()) {
+        DeckSource::Named(name_or_id) => {
+            if let Some(deck_info) = select_deck_by_name(storage, &name_or_id, "edit from")? {
+                let deck = storage.get_deck_by_id(deck_info.id)?;
+                if let Some((card_id, term)) = deck
+                    .cards
+                    .iter()
+                    .filter(|c| c.term == term_or_id || term_or_id.parse::<i64>().ok() == c.id)
+                    .map(|c| (c.id, c.term.clone()))
+                    .find(|(id, _)| id.is_some())
+                {
+                    storage.update_card(
+                        card_id.unwrap(),
+                        new_term.as_deref(),
+                        new_definition.as_deref(),
+                    )?;
+                    println!(
+                        "Successfully updated card ({}) '{}' in deck '{}'.",
+                        card_id.unwrap(),
+                        term,
+                        deck.name
+                    );
+                } else {
+                    println!(
+                        "No card query '{}' found in deck '{}'",
+                        term_or_id, deck.name
+                    );
+                }
+            }
+        }
+        DeckSource::File(_) => {
+            println!(
+                "Cannot edit cards from file-backed deck. Create or save a deck from it first."
+            );
+        }
+    }
+    Ok(())
+}
+
 pub fn delete(storage: &mut Storage, name: String) -> anyhow::Result<()> {
     if let Some(info) = select_deck_by_name(storage, &name, "delete")? {
         println!(
