@@ -79,24 +79,40 @@ pub fn add(
     Ok(())
 }
 
-// TODO: make it so that the deck selection function is more flexible and use it for choosing terms
-pub fn remove(storage: &mut Storage, deck_name: String, term: String) -> anyhow::Result<()> {
+pub fn remove(storage: &mut Storage, deck_name: String, term_or_id: String) -> anyhow::Result<()> {
     match resolve_deck_source(deck_name.as_str()) {
         DeckSource::Named(name_or_id) => {
             if let Some(deck_info) = select_deck_by_name(storage, &name_or_id, "remove from")? {
                 let deck = storage.get_deck_by_id(deck_info.id)?;
-                // find card id
-                if let Some((card_id, _, _)) = deck
+                if let Some((card_id, term)) = deck
                     .cards
                     .iter()
-                    .filter(|c| c.term == term)
-                    .map(|c| (c.id, c.term.clone(), c.definition.clone()))
-                    .find(|(id, _, _)| id.is_some())
+                    .filter(|c| c.term == term_or_id || term_or_id.parse::<i64>().ok() == c.id)
+                    .map(|c| (c.id, c.term.clone()))
+                    .find(|(id, _)| id.is_some())
                 {
-                    storage.remove_card(card_id.unwrap())?;
-                    println!("Removed card '{}' from deck '{}'", term, deck.name);
+                    println!(
+                        "Are you sure you want to remove card ({}) '{}' and its associated stats?",
+                        card_id.unwrap_or(0),
+                        term
+                    );
+                    print!("Press [ENTER] to confirm deletion or [ESC] to cancel > ");
+                    stdout().flush().context("Failed to flush output.")?;
+
+                    if enter_input()? == KeyCode::Enter {
+                        storage.remove_card(card_id.unwrap())?;
+                        println!(
+                            "\nRemoved card ({}) '{}' from deck '{}'",
+                            term_or_id, term, deck.name
+                        );
+                    } else {
+                        println!("\nRemoval cancelled.");
+                    }
                 } else {
-                    println!("No matching card '{}' found in deck '{}'", term, deck.name);
+                    println!(
+                        "No card query '{}' found in deck '{}'",
+                        term_or_id, deck.name
+                    );
                 }
             }
         }
@@ -271,16 +287,22 @@ pub fn list(
             if verbose {
                 for c in cards {
                     println!(
-                        "(ID: {}) {} -> {}",
+                        "(ID: {})\t {} -> {}",
                         c.id.map(|id| id.to_string())
-                            .unwrap_or_else(|| "X".to_string()),
+                            .unwrap_or_else(|| "".to_string()),
                         c.term,
                         c.definition
                     )
                 }
             } else {
                 for c in cards {
-                    println!("{} -> {}", c.term, c.definition)
+                    println!(
+                        "({})\t {} -> {}",
+                        c.id.map(|id| id.to_string())
+                            .unwrap_or_else(|| "".to_string()),
+                        c.term,
+                        c.definition
+                    )
                 }
             }
             Ok(())
@@ -305,7 +327,7 @@ pub fn list(
                         .map(|dt| dt.to_rfc3339())
                         .unwrap_or_else(|| "Never".to_string());
                     println!(
-                        "(ID: {})\t{}\t {} cards\t Created At: {}\t Updated At: {}",
+                        "(ID: {})\t {}\t {} cards\t Created At: {}\t Updated At: {}",
                         item.id, item.name, item.card_count, create_str, update_str
                     );
                 }
@@ -316,7 +338,7 @@ pub fn list(
                     items.retain(|(_, name)| name.to_lowercase().contains(&search_lower));
                 }
                 for (id, name) in items {
-                    println!("({})\t{}", id, name);
+                    println!("({})\t {}", id, name);
                 }
             }
             Ok(())
