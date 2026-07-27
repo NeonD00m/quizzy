@@ -4,12 +4,12 @@ mod core;
 mod mcp;
 mod ui;
 use crate::core::deck::{Deck, DeckSource, resolve_deck_source, write_deck_to_file};
-use crate::core::import::import_from_quizlet;
 use crate::core::learn::commit_session_with_retries;
 use crate::core::storage::{Storage, get_deck};
 use crate::core::string_distance::string_distance;
 use crate::ui::cards::cards_mode;
 use crate::ui::gamble::gauntlet_mode;
+use crate::ui::import::import_from_quizlet;
 use crate::ui::learn::learn_mode;
 use crate::ui::stats::stats_mode;
 use chrono::Utc;
@@ -24,7 +24,7 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// Compares two strings and outputs a distance metric (for testing or fun).
+    /// Compares two strings and outputs a distance metric (for testing).
     Compare { s1: String, s2: String },
     /// Creates a new deck with a given name, optionally importing from a file or another deck.
     New {
@@ -40,39 +40,58 @@ pub enum Command {
         // using url requires browser available, json can be used directly
         url_or_json: Option<String>,
     },
-    /// Writes a deck (by name or file path) to a file in the current directory.
+    /// Writes a deck (by name, deck id, or file path) to a file in the current directory.
     ///
-    /// Writes a deck (by name or file path) to a file in the current directory. The file type is determined by the extension you provide (e.g. csv, tsv, json). If the file already exists, it will be overwritten.
+    /// Writes a deck (by name, deck id, or file path) to a file in the current directory. The file type is determined by the extension you provide (e.g. csv, tsv, json). If the file already exists, it will be overwritten.
     Export {
-        name: String,
+        deck: String,
         /// Destination file path (e.g. deck.csv, output.json)
         file_path: PathBuf,
     },
-    /// Adds a new card to a saved deck.
+    /// Adds a new card to a saved deck (name or deck id).
     Add {
         deck: String,
         term: String,
         definition: String,
     },
-    /// Adds terms and definitions from a file or another deck to a saved deck.
+    /// Adds terms and definitions from a file or another deck to a saved deck (name or deck id).
     Append {
         deck: String,
         /// Source to import from (e.g. new_cards.csv or "Spanish Phrases")
         source: String,
     },
-    /// Removes a card from a saved deck by term.
-    Remove { deck: String, term: String },
-    /// Clears all cards from a saved deck, but keeps the deck itself.
+    /// Removes a card from a saved deck (name or deck id) by term or card id.
+    Remove {
+        deck: String,
+        term_or_card_id: String,
+    },
+    /// Clears all cards from a saved deck (name or deck id), but keeps the deck itself.
     Clear {
         deck: String,
         #[arg(short, long)]
         confirm: bool,
     },
-    /// Renames a saved deck.
+    /// Renames a saved deck (name or deck id).
     Rename { deck: String, new_name: String },
-    /// Lists saved decks, or cards in a deck if a deck name is provided.
+    /// Edits the contents of a card's term or definition.
     ///
-    /// Lists saved decks, or cards in a deck if a deck name is provided. Use -v/--verbose for card counts and creation dates when listing decks.
+    /// Edits the contents of a card's term or definition. Use `-t="new term"` or `-d="new definition"` to specify arguments.
+    Edit {
+        deck: String,
+
+        term_or_card_id: String,
+
+        /// Rewrite the term for the card.
+        #[arg(short, long)]
+        term: Option<String>,
+
+        /// Rewrite the definition for the card.
+        #[arg(short, long)]
+        definition: Option<String>,
+    },
+    /// Lists saved decks, or cards in a deck if a deck name or deck id is provided.
+    ///
+    /// Lists saved decks, or cards in a deck if a deck name or deck id is provided. Use -v/--verbose for card counts and creation dates when listing decks.
     List {
         deck: Option<String>,
 
@@ -140,9 +159,7 @@ pub enum Command {
         page: u32,
     },
     /// Launches an MCP server for AI Agents to interact with Quizzy
-    MCP {
-        // Do I need any options?
-    },
+    MCP {},
 }
 
 fn startup(storage: &mut Storage) -> anyhow::Result<()> {
@@ -232,9 +249,13 @@ fn main() -> anyhow::Result<()> {
         Command::Import { name, url_or_json } => {
             import_from_quizlet(name, url_or_json, &mut storage)
         }
-        Command::Export { name, file_path } => {
-            let deck = get_deck(resolve_deck_source(name.as_str()), &storage)?;
-            println!("Exporting deck '{}' to {}...", name, file_path.display());
+        Command::Export { deck, file_path } => {
+            let deck = get_deck(resolve_deck_source(deck.as_str()), &storage)?;
+            println!(
+                "Exporting deck '{}' to {}...",
+                deck.name,
+                file_path.display()
+            );
             write_deck_to_file(&deck, file_path)?;
             println!("Successfully exported deck.");
             Ok(())
@@ -245,9 +266,18 @@ fn main() -> anyhow::Result<()> {
             definition,
         } => ui::general::add(&mut storage, deck, term, definition),
         Command::Append { deck, source } => ui::general::append(&mut storage, deck, source),
-        Command::Remove { deck, term } => ui::general::remove(&mut storage, deck, term),
+        Command::Remove {
+            deck,
+            term_or_card_id,
+        } => ui::general::remove(&mut storage, deck, term_or_card_id),
         Command::Clear { deck, confirm } => ui::general::clear(&mut storage, deck, confirm),
         Command::Rename { deck, new_name } => ui::general::rename(&mut storage, deck, new_name),
+        Command::Edit {
+            deck,
+            term_or_card_id,
+            term,
+            definition,
+        } => ui::general::edit(&mut storage, deck, term_or_card_id, term, definition),
         Command::List {
             deck,
             search,
@@ -303,7 +333,7 @@ fn main() -> anyhow::Result<()> {
             gauntlet_mode(deck, &mut storage)
         }
         Command::Delete { deck } => match resolve_deck_source(deck.as_str()) {
-            DeckSource::Named(name) => ui::general::delete(&mut storage, name),
+            DeckSource::Named(name_or_id) => ui::general::delete(&mut storage, name_or_id),
             DeckSource::File(_) => {
                 println!(
                     "Path specified; not deleting files. Use the deck name of a saved deck to delete from DB."
