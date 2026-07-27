@@ -4,12 +4,12 @@ mod core;
 mod mcp;
 mod ui;
 use crate::core::deck::{Deck, DeckSource, resolve_deck_source, write_deck_to_file};
-use crate::core::import::import_from_quizlet;
 use crate::core::learn::commit_session_with_retries;
 use crate::core::storage::{Storage, get_deck};
 use crate::core::string_distance::string_distance;
 use crate::ui::cards::cards_mode;
 use crate::ui::gamble::gauntlet_mode;
+use crate::ui::import::import_from_quizlet;
 use crate::ui::learn::learn_mode;
 use crate::ui::stats::stats_mode;
 use chrono::Utc;
@@ -24,7 +24,7 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// Compares two strings and outputs a distance metric (for testing or fun).
+    /// Compares two strings and outputs a distance metric (for testing).
     Compare { s1: String, s2: String },
     /// Creates a new deck with a given name, optionally importing from a file or another deck.
     New {
@@ -44,7 +44,7 @@ pub enum Command {
     ///
     /// Writes a deck (by name, deck id, or file path) to a file in the current directory. The file type is determined by the extension you provide (e.g. csv, tsv, json). If the file already exists, it will be overwritten.
     Export {
-        name: String,
+        deck: String,
         /// Destination file path (e.g. deck.csv, output.json)
         file_path: PathBuf,
     },
@@ -249,9 +249,13 @@ fn main() -> anyhow::Result<()> {
         Command::Import { name, url_or_json } => {
             import_from_quizlet(name, url_or_json, &mut storage)
         }
-        Command::Export { name, file_path } => {
-            let deck = get_deck(resolve_deck_source(name.as_str()), &storage)?;
-            println!("Exporting deck '{}' to {}...", name, file_path.display());
+        Command::Export { deck, file_path } => {
+            let deck = get_deck(resolve_deck_source(deck.as_str()), &storage)?;
+            println!(
+                "Exporting deck '{}' to {}...",
+                deck.name,
+                file_path.display()
+            );
             write_deck_to_file(&deck, file_path)?;
             println!("Successfully exported deck.");
             Ok(())
