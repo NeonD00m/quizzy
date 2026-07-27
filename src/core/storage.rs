@@ -382,16 +382,15 @@ impl Storage {
         source_hash: Option<&str>,
     ) -> Result<i64> {
         let now = now_secs();
-        self.conn.execute(
-            "INSERT INTO decks (name, description, created_at, updated_at, source_path, source_hash) VALUES (?1, ?2, ?3, ?3, ?4, ?5)",
-            params![deck.name, None::<&str>, now, source_path, source_hash],
-        ).context("Failed to insert deck row.")?;
-        let deck_id = self.conn.last_insert_rowid();
-
         let tx = self
             .conn
             .transaction()
-            .context("Failed to start transaction for deck insert.")?;
+            .context("Failed to start transaction for deck creation.")?;
+        tx.execute(
+            "INSERT INTO decks (name, description, created_at, updated_at, source_path, source_hash) VALUES (?1, ?2, ?3, ?3, ?4, ?5)",
+            params![deck.name, None::<&str>, now, source_path, source_hash],
+        ).context("Failed to insert deck row.")?;
+        let deck_id = tx.last_insert_rowid();
         for c in deck.cards {
             tx.execute(
                 "INSERT INTO cards (deck_id, term, definition, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)",
@@ -416,20 +415,30 @@ impl Storage {
     }
 
     /// Add a single card to a deck
-    pub fn add_card_to_deck(&mut self, deck_id: i64, term: &str, definition: &str) -> Result<i64> {
+    pub fn add_card_to_deck(&mut self, deck_id: i64, term: &str, definition: &str) -> Result<()> {
         let now = now_secs();
-        self.conn.execute(
+        let tx = self
+            .conn
+            .transaction()
+            .context("Failed to start transaction for single card insert.")?;
+        tx.execute(
             "INSERT INTO cards (deck_id, term, definition, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)",
             params![deck_id, term, definition, now],
         ).context("Failed to insert card.")?;
-        let card_id = self.conn.last_insert_rowid();
-        self.conn
-            .execute(
-                "INSERT INTO card_stats (card_id) VALUES (?1)",
-                params![card_id],
-            )
-            .context("Failed to insert card_stats.")?;
-        Ok(card_id)
+        let card_id = tx.last_insert_rowid();
+        tx.execute(
+            "INSERT INTO card_stats (card_id) VALUES (?1)",
+            params![card_id],
+        )
+        .context("Failed to insert card_stats.")?;
+        tx.execute(
+            "UPDATE decks SET updated_at = ?1 WHERE id = ?2",
+            params![now, deck_id],
+        )
+        .context("Failed to update deck updated_at.")?;
+        tx.commit()
+            .context("Failed to commit single card insert transaction.")?;
+        Ok(())
     }
 
     /// Add multiple cards to a deck in a single transaction
@@ -451,6 +460,11 @@ impl Storage {
             )
             .context("Failed to insert card_stats in batch.")?;
         }
+        tx.execute(
+            "UPDATE decks SET updated_at = ?1 WHERE id = ?2",
+            params![now, deck_id],
+        )
+        .context("Failed to update deck updated_at.")?;
         tx.commit()
             .context("Failed to commit batch card insert transaction.")?;
         Ok(())
@@ -458,24 +472,51 @@ impl Storage {
 
     /// Remove a card by id
     pub fn remove_card(&mut self, card_id: i64) -> Result<()> {
-        self.conn
-            .execute("DELETE FROM cards WHERE id = ?1", params![card_id])
+        let tx = self
+            .conn
+            .transaction()
+            .context("Failed to start transaction for card remove.")?;
+        let deck_id: i64 = tx
+            .query_row(
+                "SELECT deck_id FROM cards WHERE id = ?1",
+                params![card_id],
+                |r| r.get(0),
+            )
+            .context("Failed to lookup deck_id for card.")?;
+        tx.execute(
+            "UPDATE decks SET updated_at = ?1 WHERE id = ?2",
+            params![now_secs(), deck_id],
+        )
+        .context("Failed to update deck updated_at.")?;
+        tx.execute("DELETE FROM cards WHERE id = ?1", params![card_id])
             .context("Failed to delete card.")?;
+        tx.commit()
+            .context("Failed to commit card remove transaction.")?;
         Ok(())
     }
 
     /// Remove all cards from a deck
     pub fn clear_deck(&mut self, deck_id: i64) -> Result<()> {
-        self.conn
-            .execute("DELETE FROM cards WHERE deck_id = ?1", params![deck_id])
+        let tx = self
+            .conn
+            .transaction()
+            .context("Failed to start transaction for clearing deck.")?;
+        tx.execute("DELETE FROM cards WHERE deck_id = ?1", params![deck_id])
             .context("Failed to clear cards from deck.")?;
         // Also clear deck stats
-        self.conn
+        tx
             .execute(
                 "UPDATE deck_stats SET questions_answered_total = 0, questions_correct_total = 0, last_studied_at = NULL WHERE deck_id = ?1",
                 params![deck_id],
             )
             .context("Failed to reset deck stats.")?;
+        tx.execute(
+            "UPDATE decks SET updated_at = ?1 WHERE id = ?2",
+            params![now_secs(), deck_id],
+        )
+        .context("Failed to update deck updated_at.")?;
+        tx.commit()
+            .context("Failed to commit card remove transaction.")?;
         Ok(())
     }
 
@@ -541,27 +582,24 @@ impl Storage {
 
     /// Delete a deck by id and its associated stats
     pub fn delete_deck_by_id(&mut self, deck_id: i64) -> Result<()> {
-        self.delete_stats_by_deck_id(deck_id)?;
-        self.conn
-            .execute("DELETE FROM decks WHERE id = ?1", params![deck_id])
+        let tx = self
+            .conn
+            .transaction()
+            .context("Failed to start transaction for deleting deck.")?;
+        tx.execute(
+            "DELETE FROM deck_stats WHERE deck_id = ?1",
+            params![deck_id],
+        )
+        .context("Failed to delete deck_stats.")?;
+        tx.execute(
+            "DELETE FROM card_stats WHERE card_id IN (SELECT id FROM cards WHERE deck_id = ?1)",
+            params![deck_id],
+        )
+        .context("Failed to delete card_stats.")?;
+        tx.execute("DELETE FROM decks WHERE id = ?1", params![deck_id])
             .context("Failed to delete deck.")?;
-        Ok(())
-    }
-
-    /// Delete stats for a deck (deck_stats and card_stats)
-    pub fn delete_stats_by_deck_id(&mut self, deck_id: i64) -> Result<()> {
-        self.conn
-            .execute(
-                "DELETE FROM deck_stats WHERE deck_id = ?1",
-                params![deck_id],
-            )
-            .context("Failed to delete deck_stats.")?;
-        self.conn
-            .execute(
-                "DELETE FROM card_stats WHERE card_id IN (SELECT id FROM cards WHERE deck_id = ?1)",
-                params![deck_id],
-            )
-            .context("Failed to delete card_stats.")?;
+        tx.commit()
+            .context("Failed to commit transaction for deleting deck.")?;
         Ok(())
     }
 

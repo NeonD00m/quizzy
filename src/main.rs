@@ -102,15 +102,43 @@ pub enum Command {
         #[arg(short, long)]
         verbose: bool,
     },
-    /// Starts a learning session with a deck, asking questions in various formats.
-    ///
-    /// Starts a learning session with a deck, asking questions in various formats. By default, it will ask a mix of term and definition questions, prioritizing written questions over multiple choice. Use the flags to customize the question types and quantity. Performance stats will be saved after the session unless --nostats is used.
+    /// Spaced-repetition (FSRS) practice by hybrid active recall with typed answers.
     Learn {
         deck: String,
 
         /// Don't save performance stats
         #[arg(short, long)]
         nostats: bool,
+
+        /// Ask about terms only (priority)
+        #[arg(short, long)]
+        terms: bool,
+
+        /// Ask about definitions only
+        #[arg(short, long)]
+        definitions: bool,
+
+        /// Ask written questions only (priority)
+        #[arg(short, long, default_value_t = false)]
+        written: bool,
+
+        /// Ask multiple choice questions only
+        #[arg(short, long, default_value_t = false)]
+        multiple_choice: bool,
+
+        /// Set the amount of questions
+        #[arg(short, long, default_value_t = 20)]
+        questions: u8,
+    },
+    /// Begins a multiple-choice/written answer test that does not affect memorization stats.
+    ///
+    /// Multiple-choice/written answer test. By default, it will ask a mix of term and definition questions, prioritizing written questions over multiple choice. Use the flags to customize the question types and quantity.
+    Test {
+        deck: String,
+
+        /// Instant feedback after every question
+        #[arg(short, long)]
+        feedback: bool,
 
         /// Ask about terms only (priority)
         #[arg(short, long)]
@@ -140,6 +168,8 @@ pub enum Command {
         #[arg(short, long)]
         shuffle: bool,
     },
+    /// "Cram" study mode for memorizing in less than a week: flash cards and simple self-grading
+    Study { deck: String },
     /// A more intense learning mode that will have you on your toes!
     Gauntlet { deck: String },
     /// Currently an alias for Gauntlet mode, but may soon have a separate style of game.
@@ -350,5 +380,6 @@ fn main() -> anyhow::Result<()> {
             stats_mode(deck_option, size, page, &mut storage)
         }
         Command::MCP {} => mcp::server::launch(storage),
+        _ => Ok(()),
     }
 }
