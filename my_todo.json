@@ -26,7 +26,7 @@
   },
   {
     "text": "make confusions go both ways",
-    "completed": false,
+    "completed": true,
     "tags": []
   },
   {
@@ -37,17 +37,23 @@
   {
     "text": "separate quiz mode to use mcq with confusions",
     "completed": false,
-    "tags": []
+    "tags": [
+      "+2/-1"
+    ]
   },
   {
     "text": "cram study mode using simple score with flashcard mode: flip, grade, next, repeat",
     "completed": false,
-    "tags": []
+    "tags": [
+      "+1/-1"
+    ]
   },
   {
     "text": "learn mode with FSRS, prompt self-grade if typed answer close but outside threshold",
     "completed": false,
-    "tags": []
+    "tags": [
+      "+2/-3"
+    ]
   },
   {
     "text": "if learn mode is initiated without a deck, then show a dashboard of decks to study with how many cards",

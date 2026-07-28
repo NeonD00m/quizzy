@@ -10,7 +10,7 @@ use crate::core::string_distance::string_distance;
 use crate::ui::cards::cards_mode;
 use crate::ui::gamble::gauntlet_mode;
 use crate::ui::import::import_from_quizlet;
-use crate::ui::learn::learn_mode;
+use crate::ui::learn::{learn_mode, test_mode};
 use crate::ui::stats::stats_mode;
 use chrono::Utc;
 use std::io::{Write, stdin, stdout};
@@ -106,10 +106,6 @@ pub enum Command {
     Learn {
         deck: String,
 
-        /// Don't save performance stats
-        #[arg(short, long)]
-        nostats: bool,
-
         /// Ask about terms only (priority)
         #[arg(short, long)]
         terms: bool,
@@ -117,18 +113,6 @@ pub enum Command {
         /// Ask about definitions only
         #[arg(short, long)]
         definitions: bool,
-
-        /// Ask written questions only (priority)
-        #[arg(short, long, default_value_t = false)]
-        written: bool,
-
-        /// Ask multiple choice questions only
-        #[arg(short, long, default_value_t = false)]
-        multiple_choice: bool,
-
-        /// Set the amount of questions
-        #[arg(short, long, default_value_t = 20)]
-        questions: u8,
     },
     /// Begins a multiple-choice/written answer test that does not affect memorization stats.
     ///
@@ -315,7 +299,19 @@ fn main() -> anyhow::Result<()> {
         } => ui::general::list(&mut storage, deck, search, verbose),
         Command::Learn {
             deck,
-            nostats,
+            terms,
+            definitions,
+        } => {
+            let deck = get_deck(resolve_deck_source(deck.as_str()), &storage)?;
+            storage.update_user_last_active()?;
+            if let Some(id) = deck.id {
+                storage.update_deck_last_studied(id)?;
+            }
+            learn_mode(deck, terms, definitions, &mut storage)
+        }
+        Command::Test {
+            deck,
+            feedback,
             terms,
             definitions,
             written,
@@ -327,9 +323,9 @@ fn main() -> anyhow::Result<()> {
             if let Some(id) = deck.id {
                 storage.update_deck_last_studied(id)?;
             }
-            learn_mode(
+            test_mode(
                 deck,
-                nostats,
+                feedback,
                 terms,
                 definitions,
                 written,

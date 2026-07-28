@@ -214,27 +214,27 @@ pub fn stats_mode(
                         "Term",
                         "Definition",
                         "Score",
-                        "Interval",
-                        "EF",
+                        "Stability",
+                        "Difficulty",
                         "Next Due",
                     ]);
 
                 for c in cards {
-                    let due_str = if c.next_due == 0 {
-                        "Now".to_string()
-                    } else {
-                        Utc.timestamp_opt(c.next_due, 0)
+                    let due_str = match c.fsrs {
+                        Some(stats) => Utc
+                            .timestamp_opt(stats.next_due, 0)
                             .unwrap()
                             .format("%Y-%m-%d")
-                            .to_string()
+                            .to_string(),
+                        None => "Now".to_string(),
                     };
 
                     table.add_row(vec![
                         truncate(&c.term, 20),
                         truncate(&c.definition, 30),
                         c.learning_score.to_string(),
-                        format!("{}d", c.interval),
-                        format!("{:.2}", c.easiness),
+                        format!("{}d", c.fsrs.map_or(0.0, |s| s.stability)),
+                        format!("{:.2}", c.fsrs.map_or(0.0, |s| s.difficulty)),
                         due_str,
                     ]);
                 }

@@ -176,8 +176,11 @@ impl McpServer {
             .iter()
             .map(|card| {
                 format!(
-                    "Card ID: {}\tTerm: {}\tDefinition: {}\tLearning Score: {}\tInterval: {}\tEasiness: {:.2}",
-                    card.card_id, card.term, card.definition, card.learning_score, card.interval, card.easiness
+                    "Card ID: {}\tTerm: {}\tDefinition: {}\tLearning Score: {}", //\tInterval: {}\tEasiness: {:.2}",
+                    card.card_id,
+                    card.term,
+                    card.definition,
+                    card.learning_score //, card.interval, card.easiness
                 )
             })
             .collect::<Vec<String>>()

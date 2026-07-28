@@ -16,15 +16,35 @@ pub struct DeckStatsSummary {
     pub average_easiness: f64,
 }
 
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub struct FSRSStats {
+    pub stability: f64,
+    pub difficulty: f64,
+    pub repetition_count: i64,
+    pub last_review: i64,
+    pub next_due: i64,
+}
+
+impl Default for FSRSStats {
+    fn default() -> Self {
+        Self {
+            stability: 0.0,
+            difficulty: 0.0,
+            repetition_count: 0,
+            last_review: 0,
+            next_due: 0,
+        }
+    }
+}
+
 pub struct CardStatRow {
-    #[allow(dead_code)]
     pub card_id: i64,
     pub term: String,
     pub definition: String,
-    pub learning_score: i64,
-    pub interval: i64,
-    pub easiness: f64,
-    pub next_due: i64,
+    pub learning_score: i64, // float to support fractional cram adjustments
+    pub fsrs: Option<FSRSStats>,
+    pub correct_count: i64,
+    pub incorrect_count: i64,
 }
 
 pub struct DeckListItem {
@@ -35,7 +55,7 @@ pub struct DeckListItem {
     pub updated_at: i64,
 }
 
-pub type SessionDelta = (i64, i64, i64, Option<crate::core::learn::SM2Stats>);
+pub type SessionDelta = (i64, i64, i64);
 
 // make learning score constants for correct and incorrect answers
 const CORRECT_ANSWER_SCORE: i64 = 3;
@@ -71,11 +91,11 @@ CREATE TABLE IF NOT EXISTS card_stats (
     learning_score INTEGER NOT NULL DEFAULT 0,
     correct_count INTEGER NOT NULL DEFAULT 0,
     incorrect_count INTEGER NOT NULL DEFAULT 0,
-    last_answered_at INTEGER,
-    interval INTEGER NOT NULL DEFAULT 0,
-    repetitions INTEGER NOT NULL DEFAULT 0,
-    easiness_factor REAL NOT NULL DEFAULT 2.5,
-    next_due INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+    stability REAL NOT NULL DEFAULT 0.0,
+    difficulty REAL NOT NULL DEFAULT 0.0,
+    repetition_count INTEGER NOT NULL DEFAULT 0,
+    last_review INTEGER NOT NULL DEFAULT 0,
+    next_due INTEGER NOT NULL DEFAULT 0,
 );
 
 CREATE INDEX IF NOT EXISTS idx_card_stats_learning_score ON card_stats(learning_score);
@@ -250,7 +270,7 @@ impl Storage {
                             line_number + 1
                         )
                     })?;
-                    out.push((a, b, c, None));
+                    out.push((a, b, c));
                     continue;
                 }
                 return Err(anyhow::anyhow!(
@@ -280,19 +300,7 @@ impl Storage {
                     line_number + 1
                 )
             })?;
-            let d_str = parts[3].trim();
-            let d: Option<crate::core::learn::SM2Stats> = if d_str == "NONE" {
-                None
-            } else {
-                Some(serde_json::from_str(d_str).with_context(|| {
-                    format!(
-                        "Invalid SM2Stats JSON in {} line {}.",
-                        path.display(),
-                        line_number + 1
-                    )
-                })?)
-            };
-            out.push((a, b, c, d));
+            out.push((a, b, c));
         }
         Ok(out)
     }
@@ -603,6 +611,94 @@ impl Storage {
         Ok(())
     }
 
+    /// Test mode commit: Updates all-time counts and learning_score (+2 / -1).
+    pub fn commit_test_session(
+        &self,
+        updates: &[(i64, i64, i64)], // (card_id, corrects, incorrects)
+    ) -> anyhow::Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+
+        for &(card_id, corrects, incorrects) in updates {
+            // Calculate learning_score delta (+2 for correct, -1 for incorrect)
+            let score_delta = (corrects * 2) as f64 - (incorrects * 1) as f64;
+
+            tx.execute(
+                "INSERT INTO card_stats (card_id, learning_score, correct_count, incorrect_count)
+                    VALUES (?1, ?2, ?3, ?4)
+                    ON CONFLICT(card_id) DO UPDATE SET
+                    learning_score = learning_score + ?2,
+                    correct_count = correct_count + ?3,
+                    incorrect_count = incorrect_count + ?4",
+                params![card_id, score_delta, corrects, incorrects],
+            )?;
+        }
+
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Cram mode commit: Updates learning_score with lighter weights (+1 / -1).
+    pub fn commit_cram_session(
+        &self,
+        updates: &[(i64, i64)], // (card_id, score_delta) where score_delta = (corrects * 1) - (incorrects * 1)
+    ) -> anyhow::Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+
+        for &(card_id, score_delta) in updates {
+            tx.execute(
+                "INSERT INTO card_stats (card_id, learning_score)
+                    VALUES (?1, ?2)
+                    ON CONFLICT(card_id) DO UPDATE SET
+                    learning_score = learning_score + ?2",
+                params![card_id, score_delta],
+            )?;
+        }
+
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Learn mode commit: Updates FSRS metrics, last_review/next_due, all-time stats, and learning_score.
+    pub fn commit_learn_session(
+        &self,
+        updates: &[(i64, FSRSStats, i64, i64, i64)], // (card_id, fsrs_stats, corrects, incorrects, score_delta)
+    ) -> anyhow::Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+
+        for (card_id, fsrs, corrects, incorrects, score_delta) in updates {
+            tx.execute(
+                "INSERT INTO card_stats (
+                    card_id, learning_score, stability, difficulty,
+                    repetition_count, last_review, next_due, correct_count, incorrect_count
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                ON CONFLICT(card_id) DO UPDATE SET
+                    learning_score = learning_score + ?2,
+                    stability = ?3,
+                    difficulty = ?4,
+                    repetition_count = ?5,
+                    last_review = ?6,
+                    next_due = ?7,
+                    correct_count = correct_count + ?8,
+                    incorrect_count = incorrect_count + ?9",
+                params![
+                    card_id,
+                    score_delta,
+                    fsrs.stability,
+                    fsrs.difficulty,
+                    fsrs.repetition_count,
+                    fsrs.last_review,
+                    fsrs.next_due,
+                    corrects,
+                    incorrects
+                ],
+            )?;
+        }
+
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Immediate update for a single answer (durable).
     /// correct: true => +3 learning_score and +1 correct_count; false => -1 learning_score and +1 incorrect_count
     pub fn _record_answer_immediate(&mut self, card_id: i64, correct: bool) -> Result<()> {
@@ -650,10 +746,7 @@ impl Storage {
 
     /// Batch commit at the end of a learning session.
     /// `updates` is a slice of tuples: (card_id, corrects_delta, incorrects_delta, Option<SM2Stats>)
-    pub fn commit_session_batch(
-        &mut self,
-        updates: &[(i64, i64, i64, Option<crate::core::learn::SM2Stats>)],
-    ) -> Result<()> {
+    pub fn commit_session_batch(&mut self, updates: &[(i64, i64, i64)]) -> Result<()> {
         if updates.is_empty() {
             return Ok(());
         }
@@ -666,46 +759,18 @@ impl Storage {
 
         let mut deck_deltas: HashMap<i64, (i64, i64)> = HashMap::new(); // deck_id -> (questions_total_delta, questions_correct_delta)
 
-        for (card_id, corrects, incorrects, sm2) in updates {
+        for (card_id, corrects, incorrects) in updates {
             let score_delta = CORRECT_ANSWER_SCORE * corrects - INCORRECT_ANSWER_SCORE * incorrects;
-            if let Some(s) = sm2 {
-                let next_due = now + s.interval * 86400;
-                tx.execute(
-                    "UPDATE card_stats
-                 SET learning_score = learning_score + ?1,
-                     correct_count = correct_count + ?2,
-                     incorrect_count = incorrect_count + ?3,
-                     last_answered_at = ?4,
-                     interval = ?5,
-                     repetitions = ?6,
-                     easiness_factor = ?7,
-                     next_due = ?8
-                 WHERE card_id = ?9",
-                    params![
-                        score_delta,
-                        corrects,
-                        incorrects,
-                        now,
-                        s.interval,
-                        s.repetitions,
-                        s.easiness_factor,
-                        next_due,
-                        card_id
-                    ],
-                )
-                .with_context(|| format!("Failed to update card_stats for card_id {}.", card_id))?;
-            } else {
-                tx.execute(
-                    "UPDATE card_stats
+            tx.execute(
+                "UPDATE card_stats
                  SET learning_score = learning_score + ?1,
                      correct_count = correct_count + ?2,
                      incorrect_count = incorrect_count + ?3,
                      last_answered_at = ?4
                  WHERE card_id = ?5",
-                    params![score_delta, corrects, incorrects, now, card_id],
-                )
-                .with_context(|| format!("Failed to update card_stats for card_id {}.", card_id))?;
-            }
+                params![score_delta, corrects, incorrects, now, card_id],
+            )
+            .with_context(|| format!("Failed to update card_stats for card_id {}.", card_id))?;
 
             let deck_id: i64 = tx
                 .query_row(
@@ -736,6 +801,37 @@ impl Storage {
         Ok(())
     }
 
+    /// Cram mode: Fetch cards for a deck ordered by lowest learning_score first.
+    pub fn get_weakest_cards(
+        &self,
+        deck_id: i64,
+        limit: usize,
+    ) -> anyhow::Result<Vec<(Card, i64)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT c.id, c.term, c.definition, COALESCE(s.learning_score, 0.0) as score
+                FROM cards c
+                LEFT JOIN card_stats s ON c.id = s.card_id
+                WHERE c.deck_id = ?1
+                ORDER BY score ASC
+                LIMIT ?2",
+        )?;
+
+        let cards = stmt
+            .query_map(params![deck_id, limit as i64], |row| {
+                let card = Card {
+                    id: Some(row.get(0)?),
+                    term: row.get(1)?,
+                    definition: row.get(2)?,
+                };
+                let score: i64 = row.get(3)?;
+                Ok((card, score))
+            })?
+            .filter_map(Result::ok)
+            .collect();
+
+        Ok(cards)
+    }
+
     /// Update a confusion count for (card_id, mistaken_with) by adding delta.
     /// If new score <= 0, remove the confusion row.
     ///
@@ -744,7 +840,14 @@ impl Storage {
     ///      - If new_count > 0 => UPDATE count = new_count
     ///      - If new_count <= 0 => DELETE row
     ///  - If no row exists and delta > 0 => INSERT new row with count = delta
-    pub fn adjust_confusion(&mut self, card_id: i64, mistaken_with: i64, delta: i64) -> Result<()> {
+    pub fn adjust_confusion(&mut self, id_a: i64, id_b: i64, delta: i64) -> Result<()> {
+        // enforce ordering so we have only have one undirected edge
+        let (card_id, mistaken_with) = if id_a < id_b {
+            (id_a, id_b)
+        } else {
+            (id_b, id_a)
+        };
+
         let tx = self
             .conn
             .transaction()
@@ -819,6 +922,24 @@ impl Storage {
         Ok(out)
     }
 
+    /// Fetches bi-directional confusions for a given card for faster accurate distractors.
+    pub fn get_bidirectional_confusions(&self, card_id: i64) -> anyhow::Result<Vec<(i64, i64)>> {
+        Ok(self
+            .conn
+            .prepare(
+                "SELECT mistaken_card_id, count
+                FROM card_confusions
+                WHERE card_id = ?1
+                UNION ALL
+                SELECT card_id, count
+                FROM card_confusions
+                WHERE mistaken_card_id = ?1",
+            )?
+            .query_map([card_id], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .filter_map(Result::ok)
+            .collect())
+    }
+
     /// Get current learning_score for a card (reads card_stats.learning_score).
     pub fn get_card_learning_score(&self, card_id: i64) -> Result<i64> {
         let score: i64 = self
@@ -830,24 +951,6 @@ impl Storage {
             )
             .with_context(|| format!("Failed to get learning_score for card {}.", card_id))?;
         Ok(score)
-    }
-
-    /// Get current SM-2 stats for a card.
-    pub fn _get_card_sm2_stats(&self, card_id: i64) -> Result<crate::core::learn::SM2Stats> {
-        use crate::core::learn::SM2Stats;
-        self.conn
-            .query_row(
-                "SELECT interval, repetitions, easiness_factor FROM card_stats WHERE card_id = ?1",
-                params![card_id],
-                |r| {
-                    Ok(SM2Stats {
-                        interval: r.get(0)?,
-                        repetitions: r.get(1)?,
-                        easiness_factor: r.get(2)?,
-                    })
-                },
-            )
-            .with_context(|| format!("Failed to get SM2 stats for card {}.", card_id))
     }
 
     /// Get cards in the positive learning set for a deck (learning_score > 0)
@@ -967,7 +1070,7 @@ impl Storage {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT c.id, c.term, c.definition, s.learning_score, s.interval, s.easiness_factor, s.next_due
+                "SELECT c.id, c.term, c.definition, s.learning_score, s.stability, s.difficulty, s.repetition_count, s.last_review, s.next_due, s.correct_count, s.incorrect_count
                  FROM cards c
                  JOIN card_stats s ON c.id = s.card_id
                  WHERE c.deck_id = ?1
@@ -983,9 +1086,15 @@ impl Storage {
                     term: r.get(1)?,
                     definition: r.get(2)?,
                     learning_score: r.get(3)?,
-                    interval: r.get(4)?,
-                    easiness: r.get(5)?,
-                    next_due: r.get(6)?,
+                    fsrs: Some(FSRSStats {
+                        stability: r.get(4)?,
+                        difficulty: r.get(5)?,
+                        repetition_count: r.get(6)?,
+                        last_review: r.get(7)?,
+                        next_due: r.get(8)?,
+                    }),
+                    correct_count: r.get(9)?,
+                    incorrect_count: r.get(10)?,
                 })
             })
             .context("Failed to query paginated cards.")?;

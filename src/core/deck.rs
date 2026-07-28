@@ -57,21 +57,6 @@ impl Deck {
     }
 }
 
-// todo: maybe implement a tutorial deck?
-// pub fn example_deck() -> Deck {
-//     Deck {
-//         name: "EXAMPLE".to_string(),
-//         cards: vec![
-//             Card::new("hola", "hello"),
-//             Card::new("la cama", "the bed"),
-//             Card::new("la puerta", "the door"),
-//             Card::new("el reloj", "the watch"),
-//             Card::new("el libro", "the book"),
-//         ],
-//         id: None,
-//     }
-// }
-
 pub enum DeckSource {
     Named(String),
     File(PathBuf),
@@ -241,16 +226,3 @@ pub fn write_deck_to_file(deck: &Deck, path: PathBuf) -> anyhow::Result<()> {
         }
     }
 }
-
-// still debating if I just make this use the storage or what???
-// fn get_deck(src: DeckSource) -> anyhow::Result<Deck> {
-//     match src {
-//         DeckSource::Named(_n) => {
-//             println!(
-//                 "Warning: Tried to obtain named deck without storage, returning example deck."
-//             );
-//             Ok(example_deck())
-//         }
-//         DeckSource::File(p) => read_deck_from_file(p),
-//     }
-// }

@@ -184,7 +184,200 @@ fn initial_fill(
 #[allow(clippy::too_many_arguments)]
 pub fn learn_mode(
     deck: Deck,
-    nostats: bool,
+    terms: bool,
+    definitions: bool,
+    storage: &mut Storage,
+) -> anyhow::Result<()> {
+    // println!("For options like -q=10 to set the number of questions, use `quizzy help learn`");
+
+    // // session-level accumulators
+    // let mut session_correct: usize = 0;
+    // let mut session_answered: usize = 0;
+    // let mut session_learned: HashSet<String> = HashSet::new();
+    // let mut session_still_learning: HashSet<String> = HashSet::new();
+    // // let mut input = String::new();
+    // let mut rng = thread_rng();
+
+    // // map accumulated session delta for batch update
+    // let mut session_updates: HashMap<i64, (i64, i64)> = HashMap::new();
+
+    // // prepare card list and threshold
+    // let mut cards: Vec<Card> = deck.cards.to_vec();
+    // let deck_size = cards.len();
+    // let threshold = learned_threshold(deck_size); // for now: static for deck size
+
+    // // map card id to score (for persistent decks)
+    // let mut scores_by_card: HashMap<i64, i64> = HashMap::new();
+    // // map term to card for quick confusion lookups
+    // let mut card_by_term: HashMap<String, Card> = HashMap::new();
+
+    // // set up cards by term and persisted scores
+    // initial_fill(
+    //     &mut cards,
+    //     threshold,
+    //     &mut card_by_term,
+    //     &mut session_learned,
+    //     &mut session_still_learning,
+    //     &mut scores_by_card,
+    //     storage,
+    // );
+
+    // // use a "bucket" of cards from the deck and refill bucket to get enough questions
+    // let mut bucket: Vec<usize> = Vec::new();
+    // fn weight_for_score(threshold: i64, score: i64) -> usize {
+    //     let raw = threshold - score;
+    //     let w = if raw < 1 { 1 } else { raw as usize };
+    //     std::cmp::min(w, 12)
+    // }
+
+    // fn refill_bucket(
+    //     cards: &[Card],
+    //     scores_by_card: &HashMap<i64, i64>,
+    //     bucket: &mut Vec<usize>,
+    //     rng: &mut ThreadRng,
+    //     threshold: i64,
+    // ) {
+    //     bucket.clear();
+    //     for (i, c) in cards.iter().enumerate() {
+    //         let score =
+    //             c.id.and_then(|id| scores_by_card.get(&id).copied())
+    //                 .unwrap_or(0);
+    //         let w = weight_for_score(threshold, score);
+    //         for _ in 0..w {
+    //             bucket.push(i);
+    //         }
+    //     }
+    //     bucket.shuffle(rng);
+    // }
+    // refill_bucket(&cards, &scores_by_card, &mut bucket, &mut rng, threshold);
+
+    // if deck.id.is_none() {
+    //     println!(
+    //         "\nUsing a file-backed deck means stats won't be persisted. If you'd like to keep track of your progress and have more adaptive learning, use `quizzy new <name> <file>` and then `quizzy learn <name>`."
+    //     )
+    // }
+
+    // print!(
+    //     "Press [ENTER] to begin lesson on {} or [ESC] at any time to end the session. > ",
+    //     deck.name
+    // );
+    // stdout().flush().context("Failed to flush output.")?;
+    // if enter_input()? == KeyCode::Esc {
+    //     println!("\nCancelled Lesson.");
+    //     return Ok(());
+    // }
+    // println!();
+    // 'questions: for i in 1..=questions {
+    //     if bucket.is_empty()
+    //         || (deck_size > 10 && bucket.len() < 1 + (deck_size as f64 * 0.25_f64) as usize)
+    //     {
+    //         refill_bucket(&cards, &scores_by_card, &mut bucket, &mut rng, threshold);
+    //     }
+    //     let index = bucket.pop().context("Bucket unexpected empty.")?;
+    //     let c = &cards.get(index).context("Expected card for index.")?;
+
+    //     // Decide what to ask:
+    //     // - prefer term vs definition according to args/random
+    //     // - prefer written if card is halfway-to-learned and written is allowed
+    //     let ask_term: bool = decide(terms, definitions, &mut rng, 0.5);
+    //     let cur_score =
+    //         c.id.and_then(|id| scores_by_card.get(&id).copied())
+    //             .unwrap_or(0);
+    //     let is_halfway = cur_score >= (threshold / 2);
+
+    //     // If the card is halfway and written flag is enabled, prefer written
+    //     let ask_written: bool = if is_halfway && written {
+    //         true
+    //     } else {
+    //         // Otherwise use the provided flags and a progressive probability
+    //         decide(
+    //             written,
+    //             multiple_choice,
+    //             &mut rng,
+    //             0.7 * (i as f64 / questions as f64) + 0.3,
+    //         )
+    //     };
+
+    //     println!();
+    //     let q_info = format!("({i}/{questions})");
+    //     if ask_term {
+    //         print_split_aligned(&format!("Term: {}", c.term), &q_info, Some(60));
+    //     } else {
+    //         print_split_aligned(&format!("Definition: {}", c.definition), &q_info, Some(60));
+    //     }
+
+    //     let response = if let Some(str) = type_input("Type the answer of [ESC] ")? {
+    //         str
+    //     } else {
+    //         println!();
+    //         break 'questions;
+    //     };
+    //     println!();
+    //     let expected = if ask_term {
+    //         c.definition.as_str()
+    //     } else {
+    //         c.term.as_str()
+    //     };
+    //     // check if typed answer is close enough
+    //     let grade = FSRSGrade::Again;
+    //     let distance = string_distance(
+    //         response.to_lowercase().as_str(),
+    //         expected.to_lowercase().as_str(),
+    //     ) as f64
+    //         / expected.len() as f64;
+
+    //     // auto grade by time taken to answer and correctness
+    //     if distance < 0.3 {
+    //         grade = FSRSGrade::Good; // if answered quickly then easy
+    //     } else if distance <= 0.5 {
+    //         // prompt self-grade
+    //         grade = FSRSGrade::Hard;
+    //     }
+
+    //     let is_right = grade as u8 > 2;
+    //     display_feedback(&response, expected, is_right);
+
+    //     session_answered += 1;
+    //     answer(
+    //         &is_right,
+    //         c,
+    //         &mut session_correct,
+    //         &mut session_learned,
+    //         &mut session_still_learning,
+    //     );
+
+    //     // a nice pause to keep things at a calm pace
+    //     std::thread::sleep(Duration::from_secs(2));
+    // }
+
+    // // TODO: update FSRS stats
+
+    // print!("Press [ENTER] to view results or [ESC] to skip > ");
+    // stdout().flush().context("Failed to flush output.")?;
+    // if enter_input()? == KeyCode::Esc {
+    //     return Ok(());
+    // }
+
+    // println!(
+    //     "{} Terms Learned: {}",
+    //     session_learned.len(),
+    //     session_learned.into_iter().collect::<Vec<_>>().join(", ")
+    // );
+    // println!(
+    //     "{} Terms Still Learning: {}",
+    //     session_still_learning.len(),
+    //     session_still_learning
+    //         .into_iter()
+    //         .collect::<Vec<_>>()
+    //         .join(", ")
+    // );
+    Ok(())
+}
+
+#[allow(dead_code)]
+pub fn test_mode(
+    deck: Deck,
+    feedback: bool,
     terms: bool,
     definitions: bool,
     written: bool,
@@ -192,14 +385,13 @@ pub fn learn_mode(
     questions: u8,
     storage: &mut Storage,
 ) -> anyhow::Result<()> {
-    println!("For options like -q=10 to set the number of questions, use `quizzy help learn`");
+    println!("For options like -q=10 to set the number of questions, use `quizzy help test`");
 
     // session-level accumulators
     let mut session_correct: usize = 0;
     let mut session_answered: usize = 0;
     let mut session_learned: HashSet<String> = HashSet::new();
     let mut session_still_learning: HashSet<String> = HashSet::new();
-    // let mut input = String::new();
     let mut rng = thread_rng();
 
     // map accumulated session delta for batch update
@@ -262,12 +454,12 @@ pub fn learn_mode(
     }
 
     print!(
-        "Press [ENTER] to begin lesson on {} or [ESC] at any time to end the session. > ",
+        "Press [ENTER] to begin test on {} or [ESC] at any time to end the session. > ",
         deck.name
     );
     stdout().flush().context("Failed to flush output.")?;
     if enter_input()? == KeyCode::Esc {
-        println!("\nCancelled Lesson.");
+        println!("\nCancelled Test.");
         return Ok(());
     }
     println!();
@@ -330,7 +522,9 @@ pub fn learn_mode(
                     expected.to_lowercase().as_str(),
                 ) as f64);
 
-            display_feedback(&response, expected, is_right);
+            if feedback {
+                display_feedback(&response, expected, is_right);
+            }
 
             session_answered += 1;
             answer(
@@ -344,7 +538,7 @@ pub fn learn_mode(
             // fetch recorded confusions for this card (if persisted)
             let mut confusions_vec: Vec<(i64, i64)> = Vec::new();
             if let Some(card_id) = c.id {
-                match storage.get_confusions(card_id) {
+                match storage.get_bidirectional_confusions(card_id) {
                     Ok(v) => confusions_vec = v,
                     Err(_) => { /* ignore DB read error; fallback to pure heuristic */ }
                 }
@@ -384,7 +578,9 @@ pub fn learn_mode(
             };
             let is_right = expected == response;
 
-            display_feedback(&response, &expected, is_right);
+            if feedback {
+                display_feedback(&response, &expected, is_right);
+            }
 
             session_answered += 1;
             answer(
@@ -425,12 +621,11 @@ pub fn learn_mode(
     }
 
     // use nostats to decide whether to update the saved stats for this deck
-    if !nostats && !session_updates.is_empty() {
+    if !session_updates.is_empty() {
         // transform the data, so sad but it had to be done
-        let mut updates_vec: Vec<(i64, i64, i64, Option<SM2Stats>)> = Vec::new();
+        let mut updates_vec: Vec<(i64, i64, i64)> = Vec::new();
         for (card_id, (corrects, incorrects)) in session_updates.into_iter() {
-            // For now we pass None for SM2Stats until we implement the UI for quality rating
-            updates_vec.push((card_id, corrects, incorrects, None));
+            updates_vec.push((card_id, corrects, incorrects));
         }
 
         // try to commit with retries for "wtf" errors

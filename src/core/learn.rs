@@ -12,58 +12,13 @@ use std::path::PathBuf;
 use std::thread::sleep;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
-pub struct SM2Stats {
-    pub interval: i64,
-    pub repetitions: i64,
-    pub easiness_factor: f64,
-}
-
-impl Default for SM2Stats {
-    fn default() -> Self {
-        Self {
-            interval: 0,
-            repetitions: 0,
-            easiness_factor: 2.5,
-        }
-    }
-}
-
-/// Calculate the next interval and stats for a card based on SM-2 algorithm.
-/// `quality` is a value from 0 to 5.
-pub fn _calculate_sm2(stats: SM2Stats, quality: u8) -> (SM2Stats, i64) {
-    let mut n = stats.repetitions;
-    let mut ef = stats.easiness_factor;
-    let mut i = stats.interval;
-
-    if quality >= 3 {
-        if n == 0 {
-            i = 1;
-        } else if n == 1 {
-            i = 6;
-        } else {
-            i = (i as f64 * ef).round() as i64;
-        }
-        n += 1;
-    } else {
-        n = 0;
-        i = 1;
-    }
-
-    // ef = ef + (0.1 - (5.0 - quality as f64) * (0.08 + (5.0 - quality as f64) * 0.02));
-    ef += 0.1 - (5.0 - quality as f64) * (0.08 + (5.0 - quality as f64) * 0.02);
-    if ef < 1.3 {
-        ef = 1.3;
-    }
-
-    (
-        SM2Stats {
-            interval: i,
-            repetitions: n,
-            easiness_factor: ef,
-        },
-        i,
-    )
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FSRSGrade {
+    // score delta += (grade * 2) - 5
+    Again = 1,
+    Hard = 2,
+    Good = 3,
+    Easy = 4,
 }
 
 pub fn decide(condition1: bool, condition2: bool, rng: &mut ThreadRng, probability: f64) -> bool {
@@ -201,7 +156,7 @@ pub fn get_multiple_choice_for_card(
 /// - Returns Ok(()) if commit succeeds, or Err(anyhow::Error) on permanent failure.
 pub fn commit_session_with_retries(
     storage: &mut Storage,
-    updates: &[(i64, i64, i64, Option<SM2Stats>)],
+    updates: &[(i64, i64, i64)],
     max_attempts: usize,
 ) -> anyhow::Result<()> {
     if updates.is_empty() {
@@ -241,10 +196,8 @@ pub fn commit_session_with_retries(
 }
 
 /// Write failed session deltas to a timestamped local file next to the DB
-/// failed session file format: each line  = "card_id,corrects,incorrects,sm2_json\n"
-pub fn write_failed_session_file(
-    updates: &[(i64, i64, i64, Option<SM2Stats>)],
-) -> anyhow::Result<PathBuf> {
+/// failed session file format: each line  = "card_id,corrects,incorrects\n"
+pub fn write_failed_session_file(updates: &[(i64, i64, i64)]) -> anyhow::Result<PathBuf> {
     // Use storage's db path helper to find the DB directory (stores next to DB).
     let mut path = db_path_from_env_or_default();
     let parent = path
@@ -268,13 +221,8 @@ pub fn write_failed_session_file(
         .open(&path)
         .map_err(|e| anyhow::anyhow!("failed to create fallback session file: {}", e))?;
 
-    for (card_id, corrects, incorrects, sm2) in updates {
-        let sm2_str = if let Some(s) = sm2 {
-            serde_json::to_string(s).unwrap_or_default()
-        } else {
-            "NONE".to_string()
-        };
-        writeln!(f, "{},{},{},{}", card_id, corrects, incorrects, sm2_str)
+    for (card_id, corrects, incorrects) in updates {
+        writeln!(f, "{},{},{}", card_id, corrects, incorrects)
             .map_err(|e| anyhow::anyhow!("failed to write to fallback session file: {}", e))?;
     }
 
