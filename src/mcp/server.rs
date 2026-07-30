@@ -256,21 +256,19 @@ impl McpServer {
             cards: vec![],
         };
 
-        let new_id = storage
-            .create_deck_from_core(new_deck, None, None)
-            .map_err(|e| {
-                tracing::error!("create_deck: database error: {:?}", e);
-                McpError::internal_error(format!("Failed to create deck '{}': {}", name, e), None)
-            })?;
+        let (new_id, new_name) = storage.create_deck_from_core(new_deck, None).map_err(|e| {
+            tracing::error!("create_deck: database error: {:?}", e);
+            McpError::internal_error(format!("Failed to create deck '{}': {}", name, e), None)
+        })?;
 
         tracing::info!(
             "create_deck: successfully created deck '{}' with ID = {}",
-            name,
+            new_name,
             new_id
         );
         Ok(CallToolResult::success(vec![ContentBlock::text(format!(
             "Successfully created deck '{}' with ID: {}",
-            name, new_id
+            new_name, new_id
         ))]))
     }
 
@@ -309,7 +307,7 @@ impl McpServer {
 
         let count = core_cards.len();
         storage
-            .add_cards_to_deck_batch(req.deck_id, core_cards)
+            .add_cards_to_deck_batch(req.deck_id, core_cards, false)
             .map_err(|e| {
                 tracing::error!("add_cards: batch insertion failed: {:?}", e);
                 McpError::internal_error(format!("Failed to add cards: {}", e), None)

@@ -37,16 +37,32 @@ pub enum Command {
     /// Imports a deck from a Quizlet URL or JSON file from the API. If a name is provided, it will be used for the deck; otherwise, you will be prompted to provide one.
     Import {
         name: Option<String>,
-        // using url requires browser available, json can be used directly
+        /// Using a url requires browser available, json can be used directly
         url_or_json: Option<String>,
+    },
+    /// Imports decks from all files in a given directory.
+    ImportAll {
+        /// Directory to import deck files from
+        dir: PathBuf,
+        /// Overwrite existing decks with the same name
+        #[arg(long)]
+        overwrite: bool,
     },
     /// Writes a deck (by name, deck id, or file path) to a file in the current directory.
     ///
-    /// Writes a deck (by name, deck id, or file path) to a file in the current directory. The file type is determined by the extension you provide (e.g. csv, tsv, json). If the file already exists, it will be overwritten.
+    /// Writes a deck (by name, deck id, or file path) to a file. If the file already exists, it will be overwritten. If no path is provided, it will attempt to write to the deck's original source path.
     Export {
         deck: String,
         /// Destination file path (e.g. deck.csv, output.json)
-        file_path: PathBuf,
+        file_path: Option<PathBuf>,
+    },
+    /// Exports all saved decks into a given directory.
+    ExportAll {
+        /// Directory to import deck files from
+        dir: PathBuf,
+        /// Only export decks with no source path (created in Quizzy, not imported from a file)
+        #[arg(long)]
+        unsourced_only: bool,
     },
     /// Adds a new card to a saved deck (name or deck id).
     Add {
@@ -263,17 +279,11 @@ fn main() -> anyhow::Result<()> {
         Command::Import { name, url_or_json } => {
             import_from_quizlet(name, url_or_json, &mut storage)
         }
-        Command::Export { deck, file_path } => {
-            let deck = get_deck(resolve_deck_source(deck.as_str()), &storage)?;
-            println!(
-                "Exporting deck '{}' to {}...",
-                deck.name,
-                file_path.display()
-            );
-            write_deck_to_file(&deck, file_path)?;
-            println!("Successfully exported deck.");
-            Ok(())
-        }
+        Command::Export { deck, file_path } => ui::general::export(&mut storage, deck, file_path),
+        Command::ExportAll {
+            dir,
+            unsourced_only,
+        } => ui::general::export_all(&mut storage, dir, unsourced_only),
         Command::Add {
             deck,
             term,

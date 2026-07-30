@@ -1,10 +1,11 @@
-use crate::core::deck::{DeckSource, resolve_deck_source};
+use crate::core::deck::{DeckSource, read_deck_from_file, resolve_deck_source, write_deck_to_file};
 use crate::core::storage::{DeckListItem, Storage, get_deck};
 use crate::ui::input::{enter_input, type_input};
 use anyhow::Context;
 use chrono::{TimeZone, Utc};
 use crossterm::event::KeyCode;
 use std::io::{Write, stdout};
+use std::path::PathBuf;
 
 /// Helper to select a deck by name. If multiple exist, prompts the user.
 fn select_deck_by_name(
@@ -235,11 +236,13 @@ pub fn rename(storage: &mut Storage, deck_name: String, new_name: String) -> any
 
 pub fn new(storage: &mut Storage, name: String, source_arg: Option<String>) -> anyhow::Result<()> {
     println!("creating deck by name: {}", name);
+    let mut src_path = None;
     let deck = if let Some(source) = source_arg {
         match resolve_deck_source(source.as_str()) {
             DeckSource::File(path) => {
                 println!("Reading cards from file {}...", path.display());
-                let mut d = crate::core::deck::read_deck_from_file(path)?;
+                let mut d = crate::core::deck::read_deck_from_file(&path)?;
+                src_path = Some(path);
                 d.name = name.clone();
                 d
             }
@@ -263,8 +266,163 @@ pub fn new(storage: &mut Storage, name: String, source_arg: Option<String>) -> a
     };
 
     println!("Saving deck {}", deck.name);
-    let deck_id = storage.create_deck_from_core(deck, None, None)?;
+    let src_path_str = src_path.as_ref().and_then(|p| p.to_str());
+    let (deck_id, _) = storage.create_deck_from_core(deck, src_path_str)?;
     println!("Successfully saved deck. ({})", deck_id);
+    Ok(())
+}
+
+pub fn import_all(storage: &mut Storage, dir: PathBuf, overwrite: bool) -> anyhow::Result<()> {
+    if !dir.try_exists()? {
+        println!("Directory {} does not exist.", dir.display());
+        return Ok(());
+    }
+    let mut success = 0;
+    let mut skipped = 0;
+    let mut errors = 0;
+    // Scan dir for files with .json, .csv, .tsv, .txt
+    for entry in dir
+        .read_dir()
+        .context("Failed to read directory.")?
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            entry
+                .path()
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext_str| {
+                    matches!(
+                        ext_str.to_lowercase().as_str(),
+                        "json" | "csv" | "tsv" | "txt"
+                    )
+                })
+                .unwrap_or(false)
+        })
+    {
+        let path = entry.path();
+        println!("Found deck file: {}", path.display());
+        let deck = read_deck_from_file(&path);
+        if let Err(e) = deck {
+            eprintln!("Failed to read deck from file {}: {}", path.display(), e);
+            errors += 1;
+            continue;
+        }
+        let deck = deck.unwrap();
+        if let Ok(existing) = storage.get_deck_by_name(deck.name.as_str()) {
+            if !overwrite {
+                println!(
+                    "Deck '{}' already exists. Use --overwrite to replace.",
+                    deck.name
+                );
+                skipped += 1;
+                continue;
+            }
+            let id = existing.id.unwrap();
+            println!(
+                "Deck ({}) '{}' already exists. Overwriting...",
+                id, deck.name
+            );
+            if let Err(e) = storage.add_cards_to_deck_batch(id, deck.cards, true) {
+                eprintln!("Failed to overwrite deck '{}': {}", deck.name, e);
+                errors += 1;
+                continue;
+            }
+            success += 1;
+        } else {
+            match storage.create_deck_from_core(deck, path.to_str()) {
+                Ok((id, name)) => {
+                    println!("Created deck ({}) '{}' from file.", id, name);
+                    success += 1;
+                }
+                Err(e) => {
+                    eprintln!("Failed to create deck from file {}: {}", path.display(), e);
+                    errors += 1;
+                }
+            }
+        }
+    }
+
+    // Read deck with read_deck_from_file(path.clone())
+    // Deck name: for JSON files, use the name field (since you've already added it to the format); for CSV/TSV, use the filename stem with _ → substitution
+    // Check if a deck with that name exists in storage.list_decks()
+    // If exists and --overwrite not set → skip, warn "Deck 'name' already exists. Use --overwrite to replace."
+    // If exists and --overwrite → delete_deck_by_id then create_deck_from_core
+    // If not exists → create_deck_from_core(deck, Some(path_str)) ← records source_path
+    // Print summary: Imported N, skipped M, errors K
+    println!(
+        "Summary: Imported {} decks, skipped {} decks, {} errors.",
+        success, skipped, errors
+    );
+    Ok(())
+}
+
+pub fn export(
+    storage: &mut Storage,
+    deck_name: String,
+    file_path: Option<PathBuf>,
+) -> anyhow::Result<()> {
+    let deck = get_deck(resolve_deck_source(deck_name.as_str()), &storage)?;
+    if let Some(path) = file_path {
+        println!("Exporting deck '{}' to {}...", deck.name, path.display());
+        write_deck_to_file(&deck, path)?;
+        println!("Successfully exported deck.");
+        return Ok(());
+    }
+
+    if deck.id.is_none() {
+        println!(
+            "Deck '{}' is not saved in the database; cannot export without a file path.",
+            deck_name
+        );
+        return Ok(());
+    }
+    match storage.get_deck_source_path(deck.id.unwrap())? {
+        Some(path) => {
+            println!(
+                "Exporting deck '{}' to original source: {}...",
+                deck.name, path
+            );
+            write_deck_to_file(&deck, PathBuf::from(path))?;
+            println!("Successfully exported deck.");
+        }
+        None => println!(
+            "Deck '{}' does not have a source file path; please specify a file path to export to.",
+            deck.name
+        ),
+    }
+    Ok(())
+}
+
+pub fn export_all(storage: &mut Storage, dir: PathBuf, unsourced_only: bool) -> anyhow::Result<()> {
+    if !dir.try_exists()? {
+        println!("Directory {} does not exist. Creating it...", dir.display());
+        std::fs::create_dir_all(&dir).context("Failed to create directory.")?;
+    }
+    let mut count = 0;
+    for (id, name) in storage.list_decks()? {
+        if unsourced_only && storage.get_deck_source_path(id)?.is_some() {
+            println!("Skipping deck '{}' (has source path)", name);
+            continue;
+        }
+        let deck = storage.get_deck_by_id(id)?;
+        let file_path = dir.join(format!(
+            "{}.tsv",
+            name.chars()
+                .map(|c| match c {
+                    '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+                    other => other,
+                })
+                .collect::<String>()
+        ));
+        println!("Exporting deck '{}' to {}...", name, file_path.display());
+        write_deck_to_file(&deck, file_path)?;
+        count += 1;
+    }
+    println!(
+        "Successfully exported {} decks to {}/.",
+        count,
+        dir.file_name().unwrap_or_default().to_string_lossy()
+    );
     Ok(())
 }
 
@@ -283,7 +441,7 @@ pub fn append(storage: &mut Storage, deck_name: String, source_arg: String) -> a
         let cards_to_append = match resolve_deck_source(source_arg.as_str()) {
             DeckSource::File(path) => {
                 println!("Reading cards from file {}...", path.display());
-                crate::core::deck::read_deck_from_file(path)?.cards
+                crate::core::deck::read_deck_from_file(&path)?.cards
             }
             DeckSource::Named(name_or_id) => {
                 if let Some(source_info) = select_deck_by_name(storage, &name_or_id, "append from")?
@@ -302,7 +460,7 @@ pub fn append(storage: &mut Storage, deck_name: String, source_arg: String) -> a
             return Ok(());
         }
 
-        storage.add_cards_to_deck_batch(target.id, cards_to_append)?;
+        storage.add_cards_to_deck_batch(target.id, cards_to_append, false)?;
         println!(
             "Successfully appended {} cards to deck '{}'.",
             count, target.name

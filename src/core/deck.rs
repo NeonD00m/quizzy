@@ -64,6 +64,7 @@ pub enum DeckSource {
 
 #[derive(Serialize, Deserialize)]
 struct JsonDeck {
+    name: String,
     cards: Vec<JsonCard>,
 }
 
@@ -96,10 +97,15 @@ pub fn resolve_deck_source(arg: &str) -> DeckSource {
     }
 }
 
-fn read_deck_tsv(path: PathBuf) -> anyhow::Result<Deck> {
+fn read_deck_tsv(path: &PathBuf) -> anyhow::Result<Deck> {
     let file = File::open(path.as_path()).context("Failed to open file.")?;
-    Ok(Deck::from_cards(
-        BufReader::new(file)
+    Ok(Deck {
+        name: path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Unnamed Deck")
+            .to_string(),
+        cards: BufReader::new(file)
             .lines()
             .filter_map(|line| {
                 if let Ok(line) = line {
@@ -112,10 +118,11 @@ fn read_deck_tsv(path: PathBuf) -> anyhow::Result<Deck> {
                 }
             })
             .collect(),
-    ))
+        id: None,
+    })
 }
 
-fn read_deck_csv(path: PathBuf) -> anyhow::Result<Deck> {
+fn read_deck_csv(path: &PathBuf) -> anyhow::Result<Deck> {
     let mut rdr = csv::ReaderBuilder::new()
         .has_headers(false)
         .from_path(path)
@@ -129,24 +136,34 @@ fn read_deck_csv(path: PathBuf) -> anyhow::Result<Deck> {
         }
     }
 
-    Ok(Deck::from_cards(cards))
+    Ok(Deck {
+        name: path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Unnamed Deck")
+            .to_string(),
+        cards,
+        id: None,
+    })
 }
 
-fn read_deck_json(path: PathBuf) -> anyhow::Result<Deck> {
+fn read_deck_json(path: &PathBuf) -> anyhow::Result<Deck> {
     let file = File::open(path.as_path()).context("Failed to open file.")?;
     let reader = BufReader::new(file);
     let json_deck: JsonDeck =
         serde_json::from_reader(reader).context("Failed to parse JSON deck.")?;
-    Ok(Deck::from_cards(
-        json_deck
+    Ok(Deck {
+        name: json_deck.name,
+        cards: json_deck
             .cards
             .into_iter()
             .map(|jc| Card::new(&jc.term, &jc.definition))
             .collect(),
-    ))
+        id: None,
+    })
 }
 
-pub fn read_deck_from_file(path: PathBuf) -> anyhow::Result<Deck> {
+pub fn read_deck_from_file(path: &PathBuf) -> anyhow::Result<Deck> {
     let ext = path
         .extension()
         .and_then(|x| x.to_str())
@@ -193,6 +210,7 @@ fn write_deck_tsv(deck: &Deck, path: PathBuf) -> anyhow::Result<()> {
 fn write_deck_json(deck: &Deck, path: PathBuf) -> anyhow::Result<()> {
     let file = File::create(path).context("Failed to create JSON file.")?;
     let json_deck = JsonDeck {
+        name: deck.name.to_string(),
         cards: deck
             .cards
             .iter()

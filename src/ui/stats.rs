@@ -24,7 +24,7 @@ enum StatsViewState {
 fn truncate(s: &str, max_len: usize) -> String {
     if s.chars().count() > max_len {
         let truncated: String = s.chars().take(max_len - 3).collect();
-        format!("{}...", truncated)
+        return format!("{}...", truncated);
     } else {
         s.to_string()
     }
