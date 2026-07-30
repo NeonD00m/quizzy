@@ -1,4 +1,5 @@
 use crate::core::deck::{Card, Deck, DeckSource, read_deck_from_file};
+use crate::core::migrations::run_migrations;
 use anyhow::{Context, Result};
 use chrono::Utc;
 use rusqlite::OptionalExtension;
@@ -61,7 +62,10 @@ pub type SessionDelta = (i64, i64, i64);
 const CORRECT_ANSWER_SCORE: i64 = 3;
 const INCORRECT_ANSWER_SCORE: i64 = 1;
 
-/// Schema initialized by `init_db`
+// ============================= Schema =============================
+
+/// Base schema applied on first open. Subsequent structural changes are
+/// handled by versioned migrations in `core::migrations`.
 const SCHEMA: &str = r#"
 PRAGMA foreign_keys = ON;
 
@@ -71,8 +75,7 @@ CREATE TABLE IF NOT EXISTS decks (
     description TEXT,
     created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
     updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
-    source_path TEXT,
-    source_hash TEXT
+    source_path TEXT
 );
 
 CREATE TABLE IF NOT EXISTS cards (
@@ -95,7 +98,7 @@ CREATE TABLE IF NOT EXISTS card_stats (
     difficulty REAL NOT NULL DEFAULT 0.0,
     repetition_count INTEGER NOT NULL DEFAULT 0,
     last_review INTEGER NOT NULL DEFAULT 0,
-    next_due INTEGER NOT NULL DEFAULT 0,
+    next_due INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_card_stats_learning_score ON card_stats(learning_score);
@@ -123,7 +126,9 @@ CREATE TABLE IF NOT EXISTS user_profile (
 );
 "#;
 
-/// wrapper around rusqlite connection exposing the repository API
+// ===================== Storage Struct & Lifecycle =====================
+
+/// Wrapper around a rusqlite connection exposing the repository API.
 pub struct Storage {
     pub conn: Connection,
 }
@@ -335,6 +340,8 @@ impl Storage {
         Ok(Self { conn })
     }
 
+    // ========================== Deck CRUD ==========================
+
     /// List decks (id, name)
     pub fn list_decks(&self) -> Result<Vec<(i64, String)>> {
         let mut stmt = self
@@ -387,16 +394,15 @@ impl Storage {
         &mut self,
         deck: Deck,
         source_path: Option<&str>,
-        source_hash: Option<&str>,
-    ) -> Result<i64> {
+    ) -> Result<(i64, String)> {
         let now = now_secs();
         let tx = self
             .conn
             .transaction()
             .context("Failed to start transaction for deck creation.")?;
         tx.execute(
-            "INSERT INTO decks (name, description, created_at, updated_at, source_path, source_hash) VALUES (?1, ?2, ?3, ?3, ?4, ?5)",
-            params![deck.name, None::<&str>, now, source_path, source_hash],
+            "INSERT INTO decks (name, description, created_at, updated_at, source_path) VALUES (?1, ?2, ?3, ?3, ?4)",
+            params![deck.name, None::<&str>, now, source_path],
         ).context("Failed to insert deck row.")?;
         let deck_id = tx.last_insert_rowid();
         for c in deck.cards {
@@ -419,7 +425,7 @@ impl Storage {
         tx.commit()
             .context("Failed to commit create_deck transaction.")?;
 
-        Ok(deck_id)
+        Ok((deck_id, deck.name))
     }
 
     /// Add a single card to a deck
@@ -450,12 +456,27 @@ impl Storage {
     }
 
     /// Add multiple cards to a deck in a single transaction
-    pub fn add_cards_to_deck_batch(&mut self, deck_id: i64, cards: Vec<Card>) -> Result<()> {
+    pub fn add_cards_to_deck_batch(
+        &mut self,
+        deck_id: i64,
+        cards: Vec<Card>,
+        clear: bool,
+    ) -> Result<()> {
         let now = now_secs();
         let tx = self
             .conn
             .transaction()
             .context("Failed to start transaction for batch card insert.")?;
+        if clear {
+            tx.execute("DELETE FROM cards WHERE deck_id = ?1", params![deck_id])
+                .context("Failed to clear cards from deck.")?;
+            tx
+                .execute(
+                    "UPDATE deck_stats SET questions_answered_total = 0, questions_correct_total = 0, last_studied_at = NULL WHERE deck_id = ?1",
+                    params![deck_id],
+                )
+                .context("Failed to reset deck stats.")?;
+        }
         for c in cards {
             tx.execute(
                 "INSERT INTO cards (deck_id, term, definition, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)",
@@ -540,6 +561,18 @@ impl Storage {
         Ok(())
     }
 
+    /// Return the `source_path` recorded for a deck (if any).
+    pub fn get_deck_source_path(&self, deck_id: i64) -> Result<Option<String>> {
+        self.conn
+            .query_row(
+                "SELECT source_path FROM decks WHERE id = ?1",
+                params![deck_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .context("Failed to query source_path for deck.")
+    }
+
     /// Get a deck by name (returns deck with card ids populated)
     pub fn get_deck_by_name(&self, name: &str) -> Result<Deck> {
         let deck_id: i64 = self
@@ -610,6 +643,13 @@ impl Storage {
             .context("Failed to commit transaction for deleting deck.")?;
         Ok(())
     }
+
+    // ========================= Card CRUD ==========================
+
+    // (add_card_to_deck, add_cards_to_deck_batch, remove_card, clear_deck,
+    //  update_card are above in the file — already grouped below Deck CRUD)
+
+    // ======================== Session Commits ======================
 
     /// Test mode commit: Updates all-time counts and learning_score (+2 / -1).
     pub fn commit_test_session(
@@ -801,6 +841,8 @@ impl Storage {
         Ok(())
     }
 
+    // ========================== Stats Reads =========================
+
     /// Cram mode: Fetch cards for a deck ordered by lowest learning_score first.
     pub fn get_weakest_cards(
         &self,
@@ -831,6 +873,8 @@ impl Storage {
 
         Ok(cards)
     }
+
+    // ========================== Confusions ==========================
 
     /// Update a confusion count for (card_id, mistaken_with) by adding delta.
     /// If new score <= 0, remove the confusion row.
@@ -982,6 +1026,8 @@ impl Storage {
         Ok(out)
     }
 
+    // ======================== User Profile ========================
+
     /// Update persistent currency in user_profile (positive or negative delta)
     pub fn update_currency(&mut self, delta: i64) -> Result<()> {
         self.conn
@@ -1032,6 +1078,8 @@ impl Storage {
             )
             .context("Failed to count cards in deck.")
     }
+
+    // ======================== Stats Reads (cont) =================
 
     /// Summarize stats for a deck: New (0 reps), Learning (1-6 interval), Mature (>=7 interval).
     pub fn get_deck_stats_summary(&self, deck_id: i64) -> Result<DeckStatsSummary> {
@@ -1162,82 +1210,62 @@ impl Storage {
         }
         Ok(())
     }
+    // ==================== Failed Session Files ====================
+
+    /// Find unsaved session files written by fallback logic.
+    /// They live next to the DB file and match `quizzy_failed_session_*.log`.
+    pub fn failed_session_files(&self) -> Result<Vec<std::path::PathBuf>> {
+        let mut dir = db_path_from_env_or_default();
+        if let Some(parent) = dir.parent() {
+            dir = parent.to_path_buf();
+        } else {
+            dir = std::path::PathBuf::from(".");
+        }
+        let mut out = Vec::new();
+        for entry in
+            std::fs::read_dir(&dir).context("Failed to read DB directory for failed sessions.")?
+        {
+            let entry = entry.context("Failed to read directory entry.")?;
+            let p = entry.path();
+            if let Some(name) = p.file_name().and_then(|n| n.to_str())
+                && name.starts_with("quizzy_failed_session_")
+                && name.ends_with(".log")
+            {
+                out.push(p);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Remove a failed session file after replay or if user discards it.
+    pub fn remove_failed_session_file(&self, path: &Path) -> Result<()> {
+        std::fs::remove_file(path)
+            .with_context(|| format!("Failed to remove failed session file {}.", path.display()))?;
+        Ok(())
+    }
 }
 
-/// Initialize the database connection: pragmas and schema
+// ========================= Free Functions ==========================
+
+/// Initialize the database connection: apply base schema, then run migrations.
 pub fn init_db(conn: &Connection) -> Result<()> {
     conn.pragma_update(None, "foreign_keys", "ON")
-        .context("failed to enable foreign_keys")?;
+        .context("Failed to enable foreign_keys")?;
     let _ = conn.pragma_update(None, "journal_mode", "WAL");
 
+    // Apply the base schema (CREATE TABLE IF NOT EXISTS — safe on existing DBs).
     conn.execute_batch(SCHEMA)
         .context("Failed to execute schema SQL")?;
 
+    // Ensure the user_profile singleton row exists.
     conn.execute(
         "INSERT OR IGNORE INTO user_profile (id, currency) VALUES (1, 0);",
         [],
     )
     .context("Failed to ensure user_profile row.")?;
 
-    // migration for adding 'streak' column because I'm stupid
-    let has_streak: Option<String> = conn
-        .query_row(
-            "SELECT name FROM pragma_table_info('user_profile') WHERE name = 'streak'",
-            [],
-            |r| r.get(0),
-        )
-        .optional()
-        .context("Failed to check for streak column in user_profile.")?;
-
-    if has_streak.is_none() {
-        conn.execute(
-            "ALTER TABLE user_profile ADD COLUMN streak INTEGER NOT NULL DEFAULT 0",
-            [],
-        )
-        .context("Failed to add streak column to user_profile.")?;
-    }
-
-    // migration for SM-2 columns in card_stats
-    let sm2_cols = ["interval", "repetitions", "easiness_factor", "next_due"];
-    for col in sm2_cols {
-        let has_col: Option<String> = conn
-            .query_row(
-                &format!(
-                    "SELECT name FROM pragma_table_info('card_stats') WHERE name = '{}'",
-                    col
-                ),
-                [],
-                |r| r.get(0),
-            )
-            .optional()
-            .context("Failed to check for column in card_stats.")?;
-
-        if has_col.is_none() {
-            let sql = match col {
-                "interval" => {
-                    "ALTER TABLE card_stats ADD COLUMN interval INTEGER NOT NULL DEFAULT 0"
-                }
-                "repetitions" => {
-                    "ALTER TABLE card_stats ADD COLUMN repetitions INTEGER NOT NULL DEFAULT 0"
-                }
-                "easiness_factor" => {
-                    "ALTER TABLE card_stats ADD COLUMN easiness_factor REAL NOT NULL DEFAULT 2.5"
-                }
-                "next_due" => {
-                    "ALTER TABLE card_stats ADD COLUMN next_due INTEGER NOT NULL DEFAULT 0"
-                }
-                _ => continue,
-            };
-            conn.execute(sql, [])
-                .with_context(|| format!("Failed to add {} column to card_stats.", col))?;
-        }
-    }
-
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_card_stats_next_due ON card_stats(next_due);",
-        [],
-    )
-    .context("Failed to create index idx_card_stats_next_due")?;
+    // Apply any pending versioned migrations.
+    run_migrations(conn).context("Failed to run schema migrations.")?;
 
     Ok(())
 }
