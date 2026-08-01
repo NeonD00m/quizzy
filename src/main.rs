@@ -16,7 +16,7 @@ use chrono::Utc;
 use std::io::{Write, stdin, stdout};
 
 #[derive(Parser)]
-#[command(name = "quizzy")]
+#[command(name = "quizzy", version)]
 pub struct Cli {
     #[command(subcommand)]
     command: Command,
