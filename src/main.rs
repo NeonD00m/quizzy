@@ -169,7 +169,7 @@ pub enum Command {
         shuffle: bool,
     },
     /// "Cram" study mode for memorizing in less than a week: flash cards and simple self-grading
-    Study { deck: String },
+    Study { saved_deck: String },
     /// A more intense learning mode that will have you on your toes!
     Gauntlet { deck: String },
     /// Currently an alias for Gauntlet mode, but may soon have a separate style of game.
@@ -351,6 +351,14 @@ fn main() -> anyhow::Result<()> {
                 storage.update_deck_last_studied(id)?;
             }
             cards_mode(deck, shuffle)
+        }
+        Command::Study { saved_deck } => {
+            let deck = get_deck(resolve_deck_source(saved_deck.as_str()), &storage)?;
+            storage.update_user_last_active()?;
+            if let Some(id) = deck.id {
+                storage.update_deck_last_studied(id)?;
+            }
+            cram_mode(deck, &mut storage)
         }
         Command::Gamble { deck } => {
             let deck = get_deck(resolve_deck_source(deck.as_str()), &storage)?;
