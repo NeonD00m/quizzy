@@ -7,7 +7,7 @@ use crate::core::deck::{Deck, DeckSource, resolve_deck_source};
 use crate::core::learn::{commit_payload_with_retries, read_failed_session_file};
 use crate::core::storage::{Storage, get_deck};
 use crate::core::string_distance::string_distance;
-use crate::ui::cards::cards_mode;
+use crate::ui::cards::{cards_mode, cram_mode};
 use crate::ui::gamble::gauntlet_mode;
 use crate::ui::import::import_from_quizlet;
 use crate::ui::learn::{learn_mode, test_mode};
@@ -169,7 +169,7 @@ pub enum Command {
         shuffle: bool,
     },
     /// "Cram" study mode for memorizing in less than a week: flash cards and simple self-grading
-    Study { deck: String },
+    Study { saved_deck: String },
     /// A more intense learning mode that will have you on your toes!
     Gauntlet { deck: String },
     /// Currently an alias for Gauntlet mode, but may soon have a separate style of game.
@@ -222,27 +222,21 @@ fn startup(storage: &mut Storage) -> anyhow::Result<()> {
                 for p in files {
                     println!("Attempting to save {}", p.display());
                     match read_failed_session_file(&p) {
-                        Ok(payload) => {
-                            match commit_payload_with_retries(storage, &payload, 3) {
-                                Ok(()) => {
-                                    println!(
-                                        "Saved session {} successfully; removing file.",
-                                        p.display()
-                                    );
-                                    if let Err(e) = storage.remove_failed_session_file(&p) {
-                                        eprintln!(
-                                            "Warning: failed to remove {}: {}",
-                                            p.display(),
-                                            e
-                                        );
-                                    }
-                                }
-                                Err(e) => {
-                                    eprintln!("Failed to save session {}: {}", p.display(), e);
-                                    eprintln!("File has been preserved; you can retry later.");
+                        Ok(payload) => match commit_payload_with_retries(storage, &payload, 3) {
+                            Ok(()) => {
+                                println!(
+                                    "Saved session {} successfully; removing file.",
+                                    p.display()
+                                );
+                                if let Err(e) = storage.remove_failed_session_file(&p) {
+                                    eprintln!("Warning: failed to remove {}: {}", p.display(), e);
                                 }
                             }
-                        }
+                            Err(e) => {
+                                eprintln!("Failed to save session {}: {}", p.display(), e);
+                                eprintln!("File has been preserved; you can retry later.");
+                            }
+                        },
                         Err(e) => {
                             eprintln!("Failed to parse session file {}: {}", p.display(), e);
                             eprintln!("Skipping this file. You can inspect or delete it manually.");
@@ -354,6 +348,14 @@ fn main() -> anyhow::Result<()> {
             }
             cards_mode(deck, shuffle)
         }
+        Command::Study { saved_deck } => {
+            let deck = get_deck(resolve_deck_source(saved_deck.as_str()), &storage)?;
+            storage.update_user_last_active()?;
+            if let Some(id) = deck.id {
+                storage.update_deck_last_studied(id)?;
+            }
+            cram_mode(deck, &mut storage)
+        }
         Command::Gamble { deck } => {
             let deck = get_deck(resolve_deck_source(deck.as_str()), &storage)?;
             storage.update_user_last_active()?;
@@ -388,6 +390,7 @@ fn main() -> anyhow::Result<()> {
             stats_mode(deck_option, size, page, &mut storage)
         }
         Command::MCP {} => mcp::server::launch(storage),
+        #[allow(unreachable_patterns)]
         _ => Ok(()),
     }
 }
