@@ -101,9 +101,9 @@ fn read_deck_tsv(path: &PathBuf) -> anyhow::Result<Deck> {
     let file = File::open(path.as_path()).context("Failed to open file.")?;
     Ok(Deck {
         name: path
-            .file_name()
+            .file_stem()
             .and_then(|s| s.to_str())
-            .unwrap_or("Unnamed Deck")
+            .unwrap_or("Unnamed_Deck")
             .to_string(),
         cards: BufReader::new(file)
             .lines()
@@ -138,9 +138,9 @@ fn read_deck_csv(path: &PathBuf) -> anyhow::Result<Deck> {
 
     Ok(Deck {
         name: path
-            .file_name()
+            .file_stem()
             .and_then(|s| s.to_str())
-            .unwrap_or("Unnamed Deck")
+            .unwrap_or("Unnamed_Deck")
             .to_string(),
         cards,
         id: None,

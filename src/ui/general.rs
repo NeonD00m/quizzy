@@ -307,7 +307,7 @@ pub fn import_all(storage: &mut Storage, dir: PathBuf, overwrite: bool) -> anyho
             errors += 1;
             continue;
         }
-        let deck = deck.unwrap();
+        let mut deck = deck.unwrap();
         if let Ok(existing) = storage.get_deck_by_name(deck.name.as_str()) {
             if !overwrite {
                 println!(
@@ -342,13 +342,6 @@ pub fn import_all(storage: &mut Storage, dir: PathBuf, overwrite: bool) -> anyho
         }
     }
 
-    // Read deck with read_deck_from_file(path.clone())
-    // Deck name: for JSON files, use the name field (since you've already added it to the format); for CSV/TSV, use the filename stem with _ → substitution
-    // Check if a deck with that name exists in storage.list_decks()
-    // If exists and --overwrite not set → skip, warn "Deck 'name' already exists. Use --overwrite to replace."
-    // If exists and --overwrite → delete_deck_by_id then create_deck_from_core
-    // If not exists → create_deck_from_core(deck, Some(path_str)) ← records source_path
-    // Print summary: Imported N, skipped M, errors K
     println!(
         "Summary: Imported {} decks, skipped {} decks, {} errors.",
         success, skipped, errors

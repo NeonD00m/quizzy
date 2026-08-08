@@ -1,24 +1,48 @@
 use crate::core::deck::*;
-use crate::core::storage::{Storage, db_path_from_env_or_default};
+use crate::core::storage::{FSRSStats, Storage, db_path_from_env_or_default};
 use crate::core::string_distance::string_distance;
+use anyhow::Context;
 use core::f64;
 use rand::Rng;
 use rand::rngs::ThreadRng;
 use rand::seq::SliceRandom;
+use serde::{Deserialize, Serialize};
 use std::cmp::min;
-use std::fs::OpenOptions;
-use std::io::Write as IoWrite;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::thread::sleep;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FSRSGrade {
-    // score delta += (grade * 2) - 5
+    // learning score delta += (grade * 2) - 5
     Again = 1,
     Hard = 2,
     Good = 3,
     Easy = 4,
+}
+
+/// Represents session performance deltas to be persisted across different study modes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SessionPayload {
+    /// Test mode: (card_id, corrects, incorrects)
+    Test { updates: Vec<(i64, i64, i64)> },
+    /// Cram mode: (card_id, score_delta)
+    Cram { updates: Vec<(i64, i64)> },
+    /// Learn mode (FSRS): (card_id, fsrs_stats, corrects, incorrects, score_delta)
+    Learn {
+        updates: Vec<(i64, FSRSStats, i64, i64, i64)>,
+    },
+}
+
+impl SessionPayload {
+    pub fn is_empty(&self) -> bool {
+        match self {
+            SessionPayload::Test { updates } => updates.is_empty(),
+            SessionPayload::Cram { updates } => updates.is_empty(),
+            SessionPayload::Learn { updates } => updates.is_empty(),
+        }
+    }
 }
 
 pub fn decide(condition1: bool, condition2: bool, rng: &mut ThreadRng, probability: f64) -> bool {
@@ -149,17 +173,17 @@ pub fn get_multiple_choice_for_card(
     chosen
 }
 
-/// Try to commit session updates with retries and backoff.
+/// Try to commit session updates with retries and exponential backoff.
 ///
-/// - `max_attempts`: how many total attempts (including first attempt).
-/// - On transient errors (contains "locked" or "busy") we retry; otherwise we fail fast.
+/// - `max_attempts`: total attempts (including first).
+/// - On transient errors ("locked" or "busy"), retries with backoff.
 /// - Returns Ok(()) if commit succeeds, or Err(anyhow::Error) on permanent failure.
-pub fn commit_session_with_retries(
-    storage: &mut Storage,
-    updates: &[(i64, i64, i64)],
+pub fn commit_payload_with_retries(
+    storage: &Storage,
+    payload: &SessionPayload,
     max_attempts: usize,
 ) -> anyhow::Result<()> {
-    if updates.is_empty() {
+    if payload.is_empty() {
         return Ok(());
     }
 
@@ -168,44 +192,55 @@ pub fn commit_session_with_retries(
 
     loop {
         attempt += 1;
-        match storage.commit_session_batch(updates) {
+        let res = match payload {
+            SessionPayload::Test { updates } => storage.commit_test_session(updates),
+            SessionPayload::Cram { updates } => storage.commit_cram_session(updates),
+            SessionPayload::Learn { updates } => storage.commit_learn_session(updates),
+        };
+
+        match res {
             Ok(()) => return Ok(()),
             Err(e) => {
-                // Inspect error string for likely transient causes (e.g. SQLITE_BUSY / "database is locked").
-                // We downcast/inspect generically via the error string because commit_session_batch returns anyhow::Error.
                 let err_str = format!("{}", e);
                 let is_transient = err_str.to_lowercase().contains("locked")
                     || err_str.to_lowercase().contains("busy");
 
                 if attempt >= max_attempts || !is_transient {
-                    // Give up and propagate the original error.
                     return Err(e);
                 }
 
                 eprintln!(
-                    "commit_session_batch attempt {}/{} failed with transient error: {}. Retrying in {}ms...",
+                    "commit_payload_with_retries attempt {}/{} failed with transient error: {}. Retrying in {}ms...",
                     attempt, max_attempts, err_str, backoff_ms
                 );
 
                 sleep(Duration::from_millis(backoff_ms));
-                // exponential backoff, cap at 2000ms
                 backoff_ms = min(backoff_ms.saturating_mul(2), 2000);
             }
         }
     }
 }
 
-/// Write failed session deltas to a timestamped local file next to the DB
-/// failed session file format: each line  = "card_id,corrects,incorrects\n"
-pub fn write_failed_session_file(updates: &[(i64, i64, i64)]) -> anyhow::Result<PathBuf> {
-    // Use storage's db path helper to find the DB directory (stores next to DB).
+#[deprecated(note = "Use commit_payload_with_retries instead")]
+pub fn commit_session_with_retries(
+    storage: &mut Storage,
+    updates: &[(i64, i64, i64)],
+    max_attempts: usize,
+) -> anyhow::Result<()> {
+    let payload = SessionPayload::Test {
+        updates: updates.to_vec(),
+    };
+    commit_payload_with_retries(storage, &payload, max_attempts)
+}
+
+/// Write failed session payload as JSON to a timestamped local file next to the DB.
+pub fn write_failed_session_file(payload: &SessionPayload) -> anyhow::Result<PathBuf> {
     let mut path = db_path_from_env_or_default();
     let parent = path
         .parent()
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."));
 
-    // timestamp for filename
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -214,17 +249,60 @@ pub fn write_failed_session_file(updates: &[(i64, i64, i64)]) -> anyhow::Result<
     let filename = format!("quizzy_failed_session_{}.log", ts);
     path = parent.join(filename);
 
-    let mut f = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(&path)
-        .map_err(|e| anyhow::anyhow!("failed to create fallback session file: {}", e))?;
+    let json_str = serde_json::to_string_pretty(payload)
+        .context("failed to serialize session payload to JSON")?;
 
-    for (card_id, corrects, incorrects) in updates {
-        writeln!(f, "{},{},{}", card_id, corrects, incorrects)
-            .map_err(|e| anyhow::anyhow!("failed to write to fallback session file: {}", e))?;
-    }
+    std::fs::write(&path, json_str).with_context(|| {
+        format!(
+            "failed to write fallback session file to {}",
+            path.display()
+        )
+    })?;
 
     Ok(path)
+}
+
+/// Read a failed session file created by `write_failed_session_file`.
+/// Supports new JSON format as well as legacy CSV format (`card_id,corrects,incorrects`).
+pub fn read_failed_session_file(path: &Path) -> anyhow::Result<SessionPayload> {
+    let s = std::fs::read_to_string(path)
+        .with_context(|| format!("Failed to read failed session file {}.", path.display()))?;
+
+    if let Ok(payload) = serde_json::from_str::<SessionPayload>(&s) {
+        return Ok(payload);
+    }
+
+    let mut updates = Vec::new();
+    for (line_number, line) in s.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = line.split(',').collect();
+        if parts.len() >= 3 {
+            let a: i64 = parts[0].trim().parse().with_context(|| {
+                format!(
+                    "Invalid card_id in {} line {}.",
+                    path.display(),
+                    line_number + 1
+                )
+            })?;
+            let b: i64 = parts[1].trim().parse().with_context(|| {
+                format!(
+                    "Invalid corrects in {} line {}.",
+                    path.display(),
+                    line_number + 1
+                )
+            })?;
+            let c: i64 = parts[2].trim().parse().with_context(|| {
+                format!(
+                    "Invalid incorrects in {} line {}.",
+                    path.display(),
+                    line_number + 1
+                )
+            })?;
+            updates.push((a, b, c));
+        }
+    }
+    Ok(SessionPayload::Test { updates })
 }

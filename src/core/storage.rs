@@ -212,111 +212,6 @@ impl Storage {
         Ok(())
     }
 
-    /// Find unsaved session files written by fallback logic.
-    /// They live next to the DB file and match `quizzy_failed_session_*.log`.
-    pub fn failed_session_files(&self) -> Result<Vec<std::path::PathBuf>> {
-        let mut dir = db_path_from_env_or_default();
-        // We want the directory containing the DB.
-        if let Some(parent) = dir.parent() {
-            dir = parent.to_path_buf();
-        } else {
-            dir = std::path::PathBuf::from(".");
-        }
-
-        let mut out = Vec::new();
-        for entry in
-            std::fs::read_dir(&dir).context("Failed to read DB directory for failed sessions.")?
-        {
-            let entry = entry.context("Failed to read directory entry.")?;
-            let p = entry.path();
-            if let Some(name) = p.file_name().and_then(|n| n.to_str())
-                && name.starts_with("quizzy_failed_session_")
-                && name.ends_with(".log")
-            {
-                out.push(p);
-            }
-        }
-        Ok(out)
-    }
-
-    /// Parse a failed session file created by `write_failed_session_file`.
-    /// Format expected: each line `card_id,corrects,incorrects,sm2_json`
-    pub fn read_failed_session_file(&self, path: &std::path::Path) -> Result<Vec<SessionDelta>> {
-        let s = std::fs::read_to_string(path)
-            .with_context(|| format!("Failed to read failed session file {}.", path.display()))?;
-        let mut out = Vec::new();
-        for (line_number, line) in s.lines().enumerate() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            let parts: Vec<&str> = line.split(',').collect();
-            if parts.len() != 4 {
-                // Compatibility check: old format has 3 parts
-                if parts.len() == 3 {
-                    let a: i64 = parts[0].trim().parse().with_context(|| {
-                        format!(
-                            "Invalid card_id in {} line {}.",
-                            path.display(),
-                            line_number + 1
-                        )
-                    })?;
-                    let b: i64 = parts[1].trim().parse().with_context(|| {
-                        format!(
-                            "Invalid corrects in {} line {}.",
-                            path.display(),
-                            line_number + 1
-                        )
-                    })?;
-                    let c: i64 = parts[2].trim().parse().with_context(|| {
-                        format!(
-                            "Invalid incorrects in {} line {}.",
-                            path.display(),
-                            line_number + 1
-                        )
-                    })?;
-                    out.push((a, b, c));
-                    continue;
-                }
-                return Err(anyhow::anyhow!(
-                    "Invalid format in {} at line {}. Expected 4 columns.",
-                    path.display(),
-                    line_number + 1
-                ));
-            }
-            let a: i64 = parts[0].trim().parse().with_context(|| {
-                format!(
-                    "Invalid card_id in {} line {}.",
-                    path.display(),
-                    line_number + 1
-                )
-            })?;
-            let b: i64 = parts[1].trim().parse().with_context(|| {
-                format!(
-                    "Invalid corrects in {} line {}.",
-                    path.display(),
-                    line_number + 1
-                )
-            })?;
-            let c: i64 = parts[2].trim().parse().with_context(|| {
-                format!(
-                    "Invalid incorrects in {} line {}.",
-                    path.display(),
-                    line_number + 1
-                )
-            })?;
-            out.push((a, b, c));
-        }
-        Ok(out)
-    }
-
-    /// Remove a failed session file after replay or if user discards it.
-    pub fn remove_failed_session_file(&self, path: &Path) -> Result<()> {
-        std::fs::remove_file(path)
-            .with_context(|| format!("Failed to remove failed session file {}.", path.display()))?;
-        Ok(())
-    }
-
     /// Open or create the DB at the canonical path and initialize schema.
     pub fn open_default() -> Result<Self> {
         let path = db_path_from_env_or_default();
@@ -1284,6 +1179,6 @@ pub fn get_deck(src: DeckSource, storage: &Storage) -> anyhow::Result<Deck> {
                     .context("Failed to get deck by name.")
             }
         }
-        DeckSource::File(p) => read_deck_from_file(p),
+        DeckSource::File(p) => read_deck_from_file(&p),
     }
 }

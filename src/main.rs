@@ -3,8 +3,8 @@ use std::path::PathBuf;
 mod core;
 mod mcp;
 mod ui;
-use crate::core::deck::{Deck, DeckSource, resolve_deck_source, write_deck_to_file};
-use crate::core::learn::commit_session_with_retries;
+use crate::core::deck::{Deck, DeckSource, resolve_deck_source};
+use crate::core::learn::{commit_payload_with_retries, read_failed_session_file};
 use crate::core::storage::{Storage, get_deck};
 use crate::core::string_distance::string_distance;
 use crate::ui::cards::cards_mode;
@@ -221,10 +221,9 @@ fn startup(storage: &mut Storage) -> anyhow::Result<()> {
             if choice == "y" || choice == "yes" {
                 for p in files {
                     println!("Attempting to save {}", p.display());
-                    match storage.read_failed_session_file(&p) {
-                        Ok(updates) => {
-                            // commit_session_with_retries is in ui::learn and should be public
-                            match commit_session_with_retries(storage, &updates, 3) {
+                    match read_failed_session_file(&p) {
+                        Ok(payload) => {
+                            match commit_payload_with_retries(storage, &payload, 3) {
                                 Ok(()) => {
                                     println!(
                                         "Saved session {} successfully; removing file.",
@@ -278,6 +277,9 @@ fn main() -> anyhow::Result<()> {
         Command::New { name, source } => ui::general::new(&mut storage, name, source),
         Command::Import { name, url_or_json } => {
             import_from_quizlet(name, url_or_json, &mut storage)
+        }
+        Command::ImportAll { dir, overwrite } => {
+            ui::general::import_all(&mut storage, dir, overwrite)
         }
         Command::Export { deck, file_path } => ui::general::export(&mut storage, deck, file_path),
         Command::ExportAll {

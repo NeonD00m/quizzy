@@ -526,14 +526,18 @@ pub fn test_mode(
                 display_feedback(&response, expected, is_right);
             }
 
-            session_answered += 1;
-            answer(
-                &is_right,
-                c,
-                &mut session_correct,
-                &mut session_learned,
-                &mut session_still_learning,
-            );
+            if let Some(id) = c.id {
+                let (c_delta, i_delta) = if is_right { (1, 0) } else { (0, 1) };
+                let immediate = [(id, c_delta, i_delta)];
+                if storage.commit_test_session(&immediate).is_err() {
+                    let entry = session_updates.entry(id).or_insert((0, 0));
+                    entry.0 += c_delta;
+                    entry.1 += i_delta;
+                }
+                let cur = scores_by_card.get(&id).copied().unwrap_or(0);
+                let new_score = cur + (if is_right { 2 } else { -1 });
+                scores_by_card.insert(id, new_score);
+            }
         } else {
             // fetch recorded confusions for this card (if persisted)
             let mut confusions_vec: Vec<(i64, i64)> = Vec::new();
@@ -592,14 +596,15 @@ pub fn test_mode(
             );
 
             if let Some(id) = c.id {
-                let entry = session_updates.entry(id).or_insert((0, 0));
-                if is_right {
-                    entry.0 += 1;
-                } else {
-                    entry.1 += 1;
+                let (c_delta, i_delta) = if is_right { (1, 0) } else { (0, 1) };
+                let immediate = [(id, c_delta, i_delta)];
+                if storage.commit_test_session(&immediate).is_err() {
+                    let entry = session_updates.entry(id).or_insert((0, 0));
+                    entry.0 += c_delta;
+                    entry.1 += i_delta;
                 }
                 let cur = scores_by_card.get(&id).copied().unwrap_or(0);
-                let new_score = cur + (if is_right { 3 } else { -1 });
+                let new_score = cur + (if is_right { 2 } else { -1 });
                 scores_by_card.insert(id, new_score);
             }
 
@@ -620,21 +625,21 @@ pub fn test_mode(
         std::thread::sleep(Duration::from_secs(2));
     }
 
-    // use nostats to decide whether to update the saved stats for this deck
+    // save any uncommitted session updates (e.g. from failed immediate commits)
     if !session_updates.is_empty() {
-        // transform the data, so sad but it had to be done
         let mut updates_vec: Vec<(i64, i64, i64)> = Vec::new();
         for (card_id, (corrects, incorrects)) in session_updates.into_iter() {
             updates_vec.push((card_id, corrects, incorrects));
         }
 
-        // try to commit with retries for "wtf" errors
-        match commit_session_with_retries(storage, &updates_vec, 3) {
+        let payload = SessionPayload::Test {
+            updates: updates_vec,
+        };
+        match commit_payload_with_retries(storage, &payload, 3) {
             Ok(()) => println!("\nSession stats saved."),
             Err(e) => {
                 eprintln!("Failed to persist session stats after retries: {}", e);
-                // try to write fallback file so data is not lost
-                match write_failed_session_file(&updates_vec) {
+                match write_failed_session_file(&payload) {
                     Ok(p) => eprintln!("Saved failed session to {:?}", p),
                     Err(e2) => eprintln!("Also failed to write fallback session file: {}", e2),
                 }
