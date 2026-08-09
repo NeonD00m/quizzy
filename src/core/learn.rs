@@ -12,13 +12,44 @@ use std::path::{Path, PathBuf};
 use std::thread::sleep;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+use crate::core::fsrs::Rating;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(u8)]
 pub enum FSRSGrade {
-    // learning score delta += (grade * 2) - 5
     Again = 1,
     Hard = 2,
     Good = 3,
     Easy = 4,
+}
+
+impl FSRSGrade {
+    pub fn score_delta(&self) -> i64 {
+        match self {
+            FSRSGrade::Again => -3,
+            FSRSGrade::Hard => -1,
+            FSRSGrade::Good => 1,
+            FSRSGrade::Easy => 3,
+        }
+    }
+
+    pub fn to_rating(&self) -> Rating {
+        match self {
+            FSRSGrade::Again => Rating::Again,
+            FSRSGrade::Hard => Rating::Hard,
+            FSRSGrade::Good => Rating::Good,
+            FSRSGrade::Easy => Rating::Easy,
+        }
+    }
+
+    pub fn from_rating(rating: Rating) -> Self {
+        match rating {
+            Rating::Again => FSRSGrade::Again,
+            Rating::Hard => FSRSGrade::Hard,
+            Rating::Good => FSRSGrade::Good,
+            Rating::Easy => FSRSGrade::Easy,
+        }
+    }
 }
 
 /// Represents session performance deltas to be persisted across different study modes.

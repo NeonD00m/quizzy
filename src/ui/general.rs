@@ -307,7 +307,7 @@ pub fn import_all(storage: &mut Storage, dir: PathBuf, overwrite: bool) -> anyho
             errors += 1;
             continue;
         }
-        let mut deck = deck.unwrap();
+        let deck = deck.unwrap();
         if let Ok(existing) = storage.get_deck_by_name(deck.name.as_str()) {
             if !overwrite {
                 println!(

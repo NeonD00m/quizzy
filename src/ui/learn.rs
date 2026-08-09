@@ -1,21 +1,22 @@
 use crate::core::deck::*;
+use crate::core::fsrs::{CardState, FsrsCard, FsrsEngine};
 use crate::core::learn::*;
-use crate::core::storage::Storage;
+use crate::core::storage::{FSRSStats, Storage};
 use crate::core::string_distance::string_distance;
 use crate::ui::{
     input::{choice_input, enter_input, type_input},
     print_split_aligned,
 };
 use anyhow::Context;
+use comfy_table::{Table, presets::UTF8_FULL};
 use core::f64;
 use crossterm::event::KeyCode;
 use rand::rngs::ThreadRng;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use std::collections::{HashMap, HashSet};
-use std::io::Write as IoWrite;
-use std::io::stdout;
-use std::time::Duration;
+use std::io::{Write as IoWrite, stdout};
+use std::time::{Duration, SystemTime};
 
 pub fn display_multiple_choice(choices: &[Card], ask_term: bool) {
     let (width, _) = crossterm::terminal::size().unwrap_or((80, 24));
@@ -181,6 +182,82 @@ fn initial_fill(
     }
 }
 
+pub fn learn_dashboard(storage: &mut Storage) -> anyhow::Result<()> {
+    let items = storage.get_deck_dashboard_items()?;
+    if items.is_empty() {
+        println!("\nNo decks found in database. Create one with `quizzy new <name> <file>`.");
+        return Ok(());
+    }
+
+    let mut table = Table::new();
+    table.load_preset(UTF8_FULL);
+    table.set_header(vec![
+        "#",
+        "Deck Name",
+        "Due Cards",
+        "New Cards",
+        "Total Cards",
+    ]);
+
+    for (i, item) in items.iter().enumerate() {
+        table.add_row(vec![
+            format!("{}", i + 1),
+            item.name.clone(),
+            format!("{}", item.due_cards),
+            format!("{}", item.new_cards),
+            format!("{}", item.total_cards),
+        ]);
+    }
+
+    println!("\n==================== Learn Dashboard ====================");
+    println!("{table}");
+    println!("=========================================================\n");
+
+    let selected_deck;
+    loop {
+        let input = match type_input(
+            format!(
+                "Select a deck number (1-{}) or type deck name to study ([ESC] to exit) ",
+                items.len()
+            )
+            .as_str(),
+        )? {
+            Some(s) if !s.trim().is_empty() => s.trim().to_string(),
+            None => {
+                println!("\n");
+                return Ok(());
+            }
+            _ => {
+                print!("\n\nNo input detected.\n");
+                stdout().flush().context("Failed to flush output.")?;
+                continue;
+            }
+        };
+
+        selected_deck = if let Ok(idx) = input.parse::<usize>() {
+            if idx >= 1 && idx <= items.len() {
+                items[idx - 1].name.clone()
+            } else {
+                print!("\n\nInvalid deck selection.\n");
+                stdout().flush().context("Failed to flush output.")?;
+                continue;
+            }
+        } else {
+            print!("\n\nPlease enter a number.\n");
+            stdout().flush().context("Failed to flush output.")?;
+            continue;
+        };
+        break;
+    }
+
+    let deck = storage.get_deck_by_name(&selected_deck)?;
+    storage.update_user_last_active()?;
+    if let Some(id) = deck.id {
+        storage.update_deck_last_studied(id)?;
+    }
+    learn_mode(deck, false, false, storage)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn learn_mode(
     deck: Deck,
@@ -188,189 +265,189 @@ pub fn learn_mode(
     definitions: bool,
     storage: &mut Storage,
 ) -> anyhow::Result<()> {
-    // println!("For options like -q=10 to set the number of questions, use `quizzy help learn`");
+    let deck_id = deck.id;
+    let card_fsrs_list: Vec<(Card, FSRSStats)> = if let Some(id) = deck_id {
+        storage.get_cards_with_fsrs_for_deck(id)?
+    } else {
+        deck.cards
+            .iter()
+            .cloned()
+            .map(|c| (c, FSRSStats::default()))
+            .collect()
+    };
 
-    // // session-level accumulators
-    // let mut session_correct: usize = 0;
-    // let mut session_answered: usize = 0;
-    // let mut session_learned: HashSet<String> = HashSet::new();
-    // let mut session_still_learning: HashSet<String> = HashSet::new();
-    // // let mut input = String::new();
-    // let mut rng = thread_rng();
+    if card_fsrs_list.is_empty() {
+        println!("\nDeck '{}' has no cards to study.", deck.name);
+        return Ok(());
+    }
 
-    // // map accumulated session delta for batch update
-    // let mut session_updates: HashMap<i64, (i64, i64)> = HashMap::new();
+    let engine = FsrsEngine::default();
+    let mut rng = thread_rng();
 
-    // // prepare card list and threshold
-    // let mut cards: Vec<Card> = deck.cards.to_vec();
-    // let deck_size = cards.len();
-    // let threshold = learned_threshold(deck_size); // for now: static for deck size
+    let now_secs = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
 
-    // // map card id to score (for persistent decks)
-    // let mut scores_by_card: HashMap<i64, i64> = HashMap::new();
-    // // map term to card for quick confusion lookups
-    // let mut card_by_term: HashMap<String, Card> = HashMap::new();
+    let mut queue: Vec<(Card, FSRSStats)> = card_fsrs_list;
+    let due_count = queue
+        .iter()
+        .filter(|(_, fsrs)| fsrs.last_review == 0 || fsrs.next_due <= now_secs)
+        .count();
 
-    // // set up cards by term and persisted scores
-    // initial_fill(
-    //     &mut cards,
-    //     threshold,
-    //     &mut card_by_term,
-    //     &mut session_learned,
-    //     &mut session_still_learning,
-    //     &mut scores_by_card,
-    //     storage,
-    // );
+    println!(
+        "\nStarting FSRS Learn Session for '{}' ({} due/new, {} total cards).",
+        deck.name,
+        due_count,
+        queue.len()
+    );
+    println!("Press [ENTER] to begin or [ESC] at any prompt to finish.");
+    stdout().flush().context("Failed to flush output.")?;
+    if enter_input()? == KeyCode::Esc {
+        println!("Cancelled session.");
+        return Ok(());
+    }
 
-    // // use a "bucket" of cards from the deck and refill bucket to get enough questions
-    // let mut bucket: Vec<usize> = Vec::new();
-    // fn weight_for_score(threshold: i64, score: i64) -> usize {
-    //     let raw = threshold - score;
-    //     let w = if raw < 1 { 1 } else { raw as usize };
-    //     std::cmp::min(w, 12)
-    // }
+    let mut updates_map: HashMap<i64, (FSRSStats, i64, i64, i64)> = HashMap::new();
+    let mut session_corrects: usize = 0;
+    let mut session_incorrects: usize = 0;
+    let mut session_reviews: usize = 0;
 
-    // fn refill_bucket(
-    //     cards: &[Card],
-    //     scores_by_card: &HashMap<i64, i64>,
-    //     bucket: &mut Vec<usize>,
-    //     rng: &mut ThreadRng,
-    //     threshold: i64,
-    // ) {
-    //     bucket.clear();
-    //     for (i, c) in cards.iter().enumerate() {
-    //         let score =
-    //             c.id.and_then(|id| scores_by_card.get(&id).copied())
-    //                 .unwrap_or(0);
-    //         let w = weight_for_score(threshold, score);
-    //         for _ in 0..w {
-    //             bucket.push(i);
-    //         }
-    //     }
-    //     bucket.shuffle(rng);
-    // }
-    // refill_bucket(&cards, &scores_by_card, &mut bucket, &mut rng, threshold);
+    let mut index = 0;
+    while index < queue.len() {
+        let (card, mut fsrs) = queue[index].clone();
+        index += 1;
 
-    // if deck.id.is_none() {
-    //     println!(
-    //         "\nUsing a file-backed deck means stats won't be persisted. If you'd like to keep track of your progress and have more adaptive learning, use `quizzy new <name> <file>` and then `quizzy learn <name>`."
-    //     )
-    // }
+        let card_id = card.id.unwrap_or(0);
+        let ask_term = decide(terms, definitions, &mut rng, 0.5);
 
-    // print!(
-    //     "Press [ENTER] to begin lesson on {} or [ESC] at any time to end the session. > ",
-    //     deck.name
-    // );
-    // stdout().flush().context("Failed to flush output.")?;
-    // if enter_input()? == KeyCode::Esc {
-    //     println!("\nCancelled Lesson.");
-    //     return Ok(());
-    // }
-    // println!();
-    // 'questions: for i in 1..=questions {
-    //     if bucket.is_empty()
-    //         || (deck_size > 10 && bucket.len() < 1 + (deck_size as f64 * 0.25_f64) as usize)
-    //     {
-    //         refill_bucket(&cards, &scores_by_card, &mut bucket, &mut rng, threshold);
-    //     }
-    //     let index = bucket.pop().context("Bucket unexpected empty.")?;
-    //     let c = &cards.get(index).context("Expected card for index.")?;
+        let q_info = format!("({}/{})", index, queue.len());
+        println!();
+        if ask_term {
+            print_split_aligned(&format!("Term: {}", card.term), &q_info, Some(60));
+        } else {
+            print_split_aligned(
+                &format!("Definition: {}", card.definition),
+                &q_info,
+                Some(60),
+            );
+        }
 
-    //     // Decide what to ask:
-    //     // - prefer term vs definition according to args/random
-    //     // - prefer written if card is halfway-to-learned and written is allowed
-    //     let ask_term: bool = decide(terms, definitions, &mut rng, 0.5);
-    //     let cur_score =
-    //         c.id.and_then(|id| scores_by_card.get(&id).copied())
-    //             .unwrap_or(0);
-    //     let is_halfway = cur_score >= (threshold / 2);
+        let response = match type_input("Type the answer or [ESC] ")? {
+            Some(s) => s,
+            None => {
+                println!("\nEnding study session early.");
+                break;
+            }
+        };
 
-    //     // If the card is halfway and written flag is enabled, prefer written
-    //     let ask_written: bool = if is_halfway && written {
-    //         true
-    //     } else {
-    //         // Otherwise use the provided flags and a progressive probability
-    //         decide(
-    //             written,
-    //             multiple_choice,
-    //             &mut rng,
-    //             0.7 * (i as f64 / questions as f64) + 0.3,
-    //         )
-    //     };
+        let expected = if ask_term {
+            card.definition.as_str()
+        } else {
+            card.term.as_str()
+        };
 
-    //     println!();
-    //     let q_info = format!("({i}/{questions})");
-    //     if ask_term {
-    //         print_split_aligned(&format!("Term: {}", c.term), &q_info, Some(60));
-    //     } else {
-    //         print_split_aligned(&format!("Definition: {}", c.definition), &q_info, Some(60));
-    //     }
+        let distance = string_distance(
+            response.trim().to_lowercase().as_str(),
+            expected.trim().to_lowercase().as_str(),
+        ) as f64;
 
-    //     let response = if let Some(str) = type_input("Type the answer of [ESC] ")? {
-    //         str
-    //     } else {
-    //         println!();
-    //         break 'questions;
-    //     };
-    //     println!();
-    //     let expected = if ask_term {
-    //         c.definition.as_str()
-    //     } else {
-    //         c.term.as_str()
-    //     };
-    //     // check if typed answer is close enough
-    //     let grade = FSRSGrade::Again;
-    //     let distance = string_distance(
-    //         response.to_lowercase().as_str(),
-    //         expected.to_lowercase().as_str(),
-    //     ) as f64
-    //         / expected.len() as f64;
+        let len = expected.trim().len().max(1) as f64;
+        let distance_ratio = distance / len;
 
-    //     // auto grade by time taken to answer and correctness
-    //     if distance < 0.3 {
-    //         grade = FSRSGrade::Good; // if answered quickly then easy
-    //     } else if distance <= 0.5 {
-    //         // prompt self-grade
-    //         grade = FSRSGrade::Hard;
-    //     }
+        let grade: FSRSGrade;
+        println!();
+        if distance_ratio <= 0.15 {
+            grade = FSRSGrade::Good;
+            display_feedback(&response, expected, true);
+        } else if distance_ratio <= 0.40 {
+            use crossterm::style::Stylize;
+            println!("\n{}", "Close answer! Please self-grade:".yellow().bold());
+            println!("   Your answer: {}", response);
+            println!("   Expected:    {}", expected);
+            println!(
+                "Select grade: (1) Again [Forgot], (2) Hard [Effort], (3) Good [Correct], (4) Easy [Instant]"
+            );
 
-    //     let is_right = grade as u8 > 2;
-    //     display_feedback(&response, expected, is_right);
+            let choice = choice_input()?;
+            grade = match choice {
+                KeyCode::Char('1') => FSRSGrade::Again,
+                KeyCode::Char('2') => FSRSGrade::Hard,
+                KeyCode::Char('3') => FSRSGrade::Good,
+                KeyCode::Char('4') => FSRSGrade::Easy,
+                _ => FSRSGrade::Hard,
+            };
+        } else {
+            grade = FSRSGrade::Again;
+            display_feedback(&response, expected, false);
+        }
 
-    //     session_answered += 1;
-    //     answer(
-    //         &is_right,
-    //         c,
-    //         &mut session_correct,
-    //         &mut session_learned,
-    //         &mut session_still_learning,
-    //     );
+        let card_state = CardState::from_u8(fsrs.state);
+        let fsrs_card = FsrsCard {
+            stability: fsrs.stability,
+            difficulty: fsrs.difficulty,
+            last_review: fsrs.last_review,
+            reps: fsrs.repetition_count as u32,
+            lapses: fsrs.lapses as u32,
+            state: card_state,
+        };
 
-    //     // a nice pause to keep things at a calm pace
-    //     std::thread::sleep(Duration::from_secs(2));
-    // }
+        let sched = engine.review_card(fsrs_card, grade.to_rating(), now_secs);
 
-    // // TODO: update FSRS stats
+        fsrs.stability = sched.card.stability;
+        fsrs.difficulty = sched.card.difficulty;
+        fsrs.repetition_count = sched.card.reps as i64;
+        fsrs.lapses = sched.card.lapses as i64;
+        fsrs.state = sched.card.state as u8;
+        fsrs.last_review = sched.card.last_review;
+        fsrs.next_due = sched.next_due;
 
-    // print!("Press [ENTER] to view results or [ESC] to skip > ");
-    // stdout().flush().context("Failed to flush output.")?;
-    // if enter_input()? == KeyCode::Esc {
-    //     return Ok(());
-    // }
+        let is_correct = grade != FSRSGrade::Again;
+        if is_correct {
+            session_corrects += 1;
+        } else {
+            session_incorrects += 1;
+            queue.push((card.clone(), fsrs));
+        }
 
-    // println!(
-    //     "{} Terms Learned: {}",
-    //     session_learned.len(),
-    //     session_learned.into_iter().collect::<Vec<_>>().join(", ")
-    // );
-    // println!(
-    //     "{} Terms Still Learning: {}",
-    //     session_still_learning.len(),
-    //     session_still_learning
-    //         .into_iter()
-    //         .collect::<Vec<_>>()
-    //         .join(", ")
-    // );
+        session_reviews += 1;
+
+        if card_id > 0 {
+            let entry = updates_map.entry(card_id).or_insert((fsrs, 0, 0, 0));
+            entry.0 = fsrs;
+            if is_correct {
+                entry.1 += 1;
+            } else {
+                entry.2 += 1;
+            }
+            entry.3 += grade.score_delta();
+        }
+
+        std::thread::sleep(Duration::from_millis(600));
+    }
+
+    if deck_id.is_some() && !updates_map.is_empty() {
+        let updates: Vec<(i64, FSRSStats, i64, i64, i64)> = updates_map
+            .into_iter()
+            .map(|(cid, (fstat, c, inc, sdelta))| (cid, fstat, c, inc, sdelta))
+            .collect();
+
+        let payload = SessionPayload::Learn { updates };
+        match commit_payload_with_retries(storage, &payload, 5) {
+            Ok(()) => println!("\n[FSRS] Successfully saved session metrics."),
+            Err(e) => {
+                eprintln!("\n[FSRS] Failed to commit session to database: {e}");
+                if let Ok(path) = write_failed_session_file(&payload) {
+                    eprintln!("[FSRS] Saved recovery file to {}", path.display());
+                }
+            }
+        }
+    }
+
+    println!(
+        "\nSession Complete! Reviewed {} cards ({} correct, {} again).",
+        session_reviews, session_corrects, session_incorrects
+    );
     Ok(())
 }
 

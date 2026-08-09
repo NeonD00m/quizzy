@@ -10,7 +10,7 @@ use crate::core::string_distance::string_distance;
 use crate::ui::cards::{cards_mode, cram_mode};
 use crate::ui::gamble::gauntlet_mode;
 use crate::ui::import::import_from_quizlet;
-use crate::ui::learn::{learn_mode, test_mode};
+use crate::ui::learn::{learn_dashboard, learn_mode, test_mode};
 use crate::ui::stats::stats_mode;
 use chrono::Utc;
 use std::io::{Write, stdin, stdout};
@@ -120,7 +120,8 @@ pub enum Command {
     },
     /// Spaced-repetition (FSRS) practice by hybrid active recall with typed answers.
     Learn {
-        deck: String,
+        /// Name of the deck to learn (optional; if omitted, shows the interactive dashboard)
+        deck: Option<String>,
 
         /// Ask about terms only (priority)
         #[arg(short, long)]
@@ -308,12 +309,16 @@ fn main() -> anyhow::Result<()> {
             terms,
             definitions,
         } => {
-            let deck = get_deck(resolve_deck_source(deck.as_str()), &storage)?;
-            storage.update_user_last_active()?;
-            if let Some(id) = deck.id {
-                storage.update_deck_last_studied(id)?;
+            if let Some(deck_name) = deck {
+                let deck = get_deck(resolve_deck_source(deck_name.as_str()), &storage)?;
+                storage.update_user_last_active()?;
+                if let Some(id) = deck.id {
+                    storage.update_deck_last_studied(id)?;
+                }
+                learn_mode(deck, terms, definitions, &mut storage)
+            } else {
+                learn_dashboard(&mut storage)
             }
-            learn_mode(deck, terms, definitions, &mut storage)
         }
         Command::Test {
             deck,

@@ -1,4 +1,5 @@
 pub mod deck;
+pub mod fsrs;
 pub mod import;
 pub mod learn;
 pub mod migrations;

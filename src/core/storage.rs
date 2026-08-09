@@ -24,6 +24,8 @@ pub struct FSRSStats {
     pub repetition_count: i64,
     pub last_review: i64,
     pub next_due: i64,
+    pub lapses: i64,
+    pub state: u8,
 }
 
 impl Default for FSRSStats {
@@ -34,6 +36,8 @@ impl Default for FSRSStats {
             repetition_count: 0,
             last_review: 0,
             next_due: 0,
+            lapses: 0,
+            state: 0,
         }
     }
 }
@@ -54,6 +58,16 @@ pub struct DeckListItem {
     pub created_at: i64,
     pub card_count: i64,
     pub updated_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct DeckDashboardItem {
+    pub id: i64,
+    pub name: String,
+    pub total_cards: i64,
+    pub due_cards: i64,
+    pub new_cards: i64,
+    pub last_studied_at: Option<i64>,
 }
 
 pub type SessionDelta = (i64, i64, i64);
@@ -98,7 +112,9 @@ CREATE TABLE IF NOT EXISTS card_stats (
     difficulty REAL NOT NULL DEFAULT 0.0,
     repetition_count INTEGER NOT NULL DEFAULT 0,
     last_review INTEGER NOT NULL DEFAULT 0,
-    next_due INTEGER NOT NULL DEFAULT 0
+    next_due INTEGER NOT NULL DEFAULT 0,
+    lapses INTEGER NOT NULL DEFAULT 0,
+    state INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_card_stats_learning_score ON card_stats(learning_score);
@@ -604,9 +620,9 @@ impl Storage {
             tx.execute(
                 "INSERT INTO card_stats (
                     card_id, learning_score, stability, difficulty,
-                    repetition_count, last_review, next_due, correct_count, incorrect_count
+                    repetition_count, last_review, next_due, lapses, state, correct_count, incorrect_count
                 )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
                 ON CONFLICT(card_id) DO UPDATE SET
                     learning_score = learning_score + ?2,
                     stability = ?3,
@@ -614,8 +630,10 @@ impl Storage {
                     repetition_count = ?5,
                     last_review = ?6,
                     next_due = ?7,
-                    correct_count = correct_count + ?8,
-                    incorrect_count = incorrect_count + ?9",
+                    lapses = ?8,
+                    state = ?9,
+                    correct_count = correct_count + ?10,
+                    incorrect_count = incorrect_count + ?11",
                 params![
                     card_id,
                     score_delta,
@@ -624,6 +642,8 @@ impl Storage {
                     fsrs.repetition_count,
                     fsrs.last_review,
                     fsrs.next_due,
+                    fsrs.lapses,
+                    fsrs.state,
                     corrects,
                     incorrects
                 ],
@@ -767,6 +787,101 @@ impl Storage {
             .collect();
 
         Ok(cards)
+    }
+
+    /// Learn mode (FSRS): Fetch cards for a deck alongside their current FSRSStats.
+    /// Orders by cards that are due first (next_due <= now or last_review == 0), then by oldest next_due.
+    pub fn get_cards_with_fsrs_for_deck(
+        &self,
+        deck_id: i64,
+    ) -> anyhow::Result<Vec<(Card, FSRSStats)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT c.id, c.term, c.definition,
+                    COALESCE(s.stability, 0.0),
+                    COALESCE(s.difficulty, 0.0),
+                    COALESCE(s.repetition_count, 0),
+                    COALESCE(s.last_review, 0),
+                    COALESCE(s.next_due, 0),
+                    COALESCE(s.lapses, 0),
+                    COALESCE(s.state, 0)
+             FROM cards c
+             LEFT JOIN card_stats s ON c.id = s.card_id
+             WHERE c.deck_id = ?1
+             ORDER BY
+                CASE WHEN COALESCE(s.last_review, 0) == 0 THEN 0
+                     WHEN COALESCE(s.next_due, 0) <= strftime('%s','now') THEN 1
+                     ELSE 2 END ASC,
+                COALESCE(s.next_due, 0) ASC,
+                c.id ASC",
+        )?;
+
+        let rows = stmt.query_map(params![deck_id], |row| {
+            let card = Card {
+                id: Some(row.get(0)?),
+                term: row.get(1)?,
+                definition: row.get(2)?,
+            };
+            let fsrs = FSRSStats {
+                stability: row.get(3)?,
+                difficulty: row.get(4)?,
+                repetition_count: row.get(5)?,
+                last_review: row.get(6)?,
+                next_due: row.get(7)?,
+                lapses: row.get(8)?,
+                state: row.get(9)?,
+            };
+            Ok((card, fsrs))
+        })?;
+
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.context("Failed mapping card FSRS row.")?);
+        }
+        Ok(out)
+    }
+
+    /// Dashboard query: Returns summary stats for all saved decks including total cards,
+    /// due cards, new cards, and last studied timestamp.
+    pub fn get_deck_dashboard_items(&self) -> anyhow::Result<Vec<DeckDashboardItem>> {
+        let now = now_secs();
+        let mut stmt = self.conn.prepare(
+            "SELECT d.id, d.name,
+                    COUNT(c.id) AS total_cards,
+                    SUM(CASE WHEN s.last_review IS NULL OR s.last_review = 0 OR s.next_due <= ?1 THEN 1 ELSE 0 END) AS due_cards,
+                    SUM(CASE WHEN s.repetition_count IS NULL OR s.repetition_count = 0 THEN 1 ELSE 0 END) AS new_cards,
+                    ds.last_studied_at
+             FROM decks d
+             LEFT JOIN cards c ON d.id = c.deck_id
+             LEFT JOIN card_stats s ON c.id = s.card_id
+             LEFT JOIN deck_stats ds ON d.id = ds.deck_id
+             GROUP BY d.id
+             ORDER BY due_cards DESC, d.name ASC",
+        )?;
+
+        let rows = stmt
+            .query_map(params![now], |row| {
+                Ok(DeckDashboardItem {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    total_cards: row.get(2)?,
+                    due_cards: row.get(3)?,
+                    new_cards: row.get(4)?,
+                    last_studied_at: row.get(5)?,
+                })
+            })?
+            .filter(|res| {
+                if let Ok(i) = res {
+                    i.due_cards > 0
+                } else {
+                    false
+                }
+            });
+
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.context("Failed mapping deck dashboard item.")?);
+        }
+        Ok(out)
     }
 
     // ========================== Confusions ==========================
@@ -1013,7 +1128,7 @@ impl Storage {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT c.id, c.term, c.definition, s.learning_score, s.stability, s.difficulty, s.repetition_count, s.last_review, s.next_due, s.correct_count, s.incorrect_count
+                "SELECT c.id, c.term, c.definition, s.learning_score, s.stability, s.difficulty, s.repetition_count, s.last_review, s.next_due, s.lapses, s.state, s.correct_count, s.incorrect_count
                  FROM cards c
                  JOIN card_stats s ON c.id = s.card_id
                  WHERE c.deck_id = ?1
@@ -1035,9 +1150,11 @@ impl Storage {
                         repetition_count: r.get(6)?,
                         last_review: r.get(7)?,
                         next_due: r.get(8)?,
+                        lapses: r.get(9)?,
+                        state: r.get(10)?,
                     }),
-                    correct_count: r.get(9)?,
-                    incorrect_count: r.get(10)?,
+                    correct_count: r.get(11)?,
+                    incorrect_count: r.get(12)?,
                 })
             })
             .context("Failed to query paginated cards.")?;
@@ -1180,5 +1297,66 @@ pub fn get_deck(src: DeckSource, storage: &Storage) -> anyhow::Result<Deck> {
             }
         }
         DeckSource::File(p) => read_deck_from_file(&p),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    #[test]
+    fn test_init_db_and_fsrs_session_commit() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+
+        let storage = Storage { conn };
+
+        let deck_id: i64 = storage
+            .conn
+            .query_row(
+                "INSERT INTO decks (name) VALUES ('Test Deck') RETURNING id",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+
+        let card_id: i64 = storage
+            .conn
+            .query_row(
+                "INSERT INTO cards (deck_id, term, definition) VALUES (?1, 'Hola', 'Hello') RETURNING id",
+                params![deck_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+
+        let fsrs = FSRSStats {
+            stability: 2.5,
+            difficulty: 4.1,
+            repetition_count: 1,
+            last_review: 100000,
+            next_due: 186400,
+            lapses: 0,
+            state: 2,
+        };
+
+        storage
+            .commit_learn_session(&[(card_id, fsrs, 1, 0, 1)])
+            .unwrap();
+
+        let cards_with_fsrs = storage.get_cards_with_fsrs_for_deck(deck_id).unwrap();
+        assert_eq!(cards_with_fsrs.len(), 1);
+        let (c, read_fsrs) = &cards_with_fsrs[0];
+        assert_eq!(c.term, "Hola");
+        assert_eq!(read_fsrs.stability, 2.5);
+        assert_eq!(read_fsrs.difficulty, 4.1);
+        assert_eq!(read_fsrs.repetition_count, 1);
+        assert_eq!(read_fsrs.lapses, 0);
+        assert_eq!(read_fsrs.state, 2);
+
+        let dashboard = storage.get_deck_dashboard_items().unwrap();
+        assert_eq!(dashboard.len(), 1);
+        assert_eq!(dashboard[0].name, "Test Deck");
+        assert_eq!(dashboard[0].total_cards, 1);
     }
 }

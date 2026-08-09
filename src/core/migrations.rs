@@ -35,6 +35,11 @@ static MIGRATIONS: &[Migration] = &[
         name: "drop_source_hash",
         sql: include_str!("../migrations/003_drop_source_hash.sql"),
     },
+    Migration {
+        version: 4,
+        name: "add_fsrs_lapses_and_state",
+        sql: include_str!("../migrations/004_add_fsrs_lapses_and_state.sql"),
+    },
 ];
 
 /// Apply all pending migrations to the database.
