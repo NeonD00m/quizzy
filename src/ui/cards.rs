@@ -1,4 +1,5 @@
 use crate::core::storage::Storage;
+use crate::ui::general::select_deck_by_name;
 use crate::ui::input::choice_input;
 use crate::ui::{
     input::{cards_input, key_input},
@@ -54,7 +55,22 @@ fn display_card(c: &Card, flipped: bool) {
     println!("╰{:─^len$}╯", "", len = len);
 }
 
-pub fn cards_mode(deck: Deck, shuffle: bool) -> anyhow::Result<()> {
+pub fn cards_mode(deck: Option<Deck>, shuffle: bool, storage: &mut Storage) -> anyhow::Result<()> {
+    let deck = match deck {
+        Some(d) => d,
+        None => {
+            if let Some(item) = select_deck_by_name(storage, "", "study")? {
+                let d = storage.get_deck_by_id(item.id)?;
+                let _ = storage.update_user_last_active();
+                if let Some(id) = d.id {
+                    let _ = storage.update_deck_last_studied(id);
+                }
+                d
+            } else {
+                return Ok(());
+            }
+        }
+    };
     println!("To see options like -s for shuffling, use `quizzy help cards`");
     let mut flipped = false;
     let mut index: usize = 0;
@@ -120,7 +136,22 @@ pub fn cards_mode(deck: Deck, shuffle: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn cram_mode(deck: Deck, storage: &Storage) -> anyhow::Result<()> {
+pub fn cram_mode(deck: Option<Deck>, storage: &mut Storage) -> anyhow::Result<()> {
+    let deck = match deck {
+        Some(d) => d,
+        None => {
+            if let Some(item) = select_deck_by_name(storage, "", "cram")? {
+                let d = storage.get_deck_by_id(item.id)?;
+                let _ = storage.update_user_last_active();
+                if let Some(id) = d.id {
+                    let _ = storage.update_deck_last_studied(id);
+                }
+                d
+            } else {
+                return Ok(());
+            }
+        }
+    };
     println!("Cram mode: We're going to get you through this buddy.");
     let deck_id = deck
         .id

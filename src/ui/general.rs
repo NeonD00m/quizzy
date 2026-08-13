@@ -7,20 +7,28 @@ use crossterm::event::KeyCode;
 use std::io::{Write, stdout};
 use std::path::PathBuf;
 
-/// Helper to select a deck by name. If multiple exist, prompts the user.
-fn select_deck_by_name(
+/// Helper to select a deck by name. If multiple exist (or if name is empty), prompts the user.
+pub fn select_deck_by_name(
     storage: &Storage,
     name_or_id: &str,
     action_verb: &str,
 ) -> anyhow::Result<Option<DeckListItem>> {
-    let mut matches: Vec<_> = storage
-        .list_decks_detailed()?
-        .into_iter()
-        .filter(|item| item.name == name_or_id || name_or_id.parse::<i64>().ok() == Some(item.id))
-        .collect();
+    let mut matches: Vec<_> = if name_or_id.trim().is_empty() {
+        storage.list_decks_detailed()?
+    } else {
+        storage
+            .list_decks_detailed()?
+            .into_iter()
+            .filter(|item| item.name == name_or_id || name_or_id.parse::<i64>().ok() == Some(item.id))
+            .collect()
+    };
 
     if matches.is_empty() {
-        println!("No decks found by the name '{}'.", name_or_id);
+        if name_or_id.trim().is_empty() {
+            println!("No decks found in database.");
+        } else {
+            println!("No decks found by the name '{}'.", name_or_id);
+        }
         return Ok(None);
     }
 
@@ -28,7 +36,11 @@ fn select_deck_by_name(
         return Ok(Some(matches.remove(0)));
     }
 
-    println!("Found the following decks with the name '{}':", name_or_id);
+    if name_or_id.trim().is_empty() {
+        println!("Available decks:");
+    } else {
+        println!("Found the following decks with the name '{}':", name_or_id);
+    }
     for item in &matches {
         let date_str = Utc
             .timestamp_opt(item.created_at, 0)

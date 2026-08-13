@@ -163,14 +163,17 @@ pub enum Command {
     },
     /// Review cards in a deck without quizzing, optionally shuffling the order.
     Cards {
-        deck: String,
+        /// Name of the deck to review (optional; if omitted, prompts deck selection)
+        deck: Option<String>,
 
         /// Shuffle cards before studying
         #[arg(short, long)]
         shuffle: bool,
     },
     /// "Cram" study mode for memorizing in less than a week: flash cards and simple self-grading
-    Study { saved_deck: String },
+    Study { saved_deck: Option<String> },
+    /// "Cram" study mode for memorizing in less than a week: flash cards and simple self-grading
+    Cram { saved_deck: Option<String> },
     /// A more intense learning mode that will have you on your toes!
     Gauntlet { deck: String },
     /// Currently an alias for Gauntlet mode, but may soon have a separate style of game.
@@ -346,30 +349,32 @@ fn main() -> anyhow::Result<()> {
             )
         }
         Command::Cards { deck, shuffle } => {
-            let deck = get_deck(resolve_deck_source(deck.as_str()), &storage)?;
-            storage.update_user_last_active()?;
-            if let Some(id) = deck.id {
-                storage.update_deck_last_studied(id)?;
-            }
-            cards_mode(deck, shuffle)
+            let deck = if let Some(deck_name) = deck {
+                let deck = get_deck(resolve_deck_source(deck_name.as_str()), &storage)?;
+                storage.update_user_last_active()?;
+                if let Some(id) = deck.id {
+                    storage.update_deck_last_studied(id)?;
+                }
+                Some(deck)
+            } else {
+                None
+            };
+            cards_mode(deck, shuffle, &mut storage)
         }
-        Command::Study { saved_deck } => {
-            let deck = get_deck(resolve_deck_source(saved_deck.as_str()), &storage)?;
-            storage.update_user_last_active()?;
-            if let Some(id) = deck.id {
-                storage.update_deck_last_studied(id)?;
-            }
+        Command::Study { saved_deck } | Command::Cram { saved_deck } => {
+            let deck = if let Some(deck_name) = saved_deck {
+                let deck = get_deck(resolve_deck_source(deck_name.as_str()), &storage)?;
+                storage.update_user_last_active()?;
+                if let Some(id) = deck.id {
+                    storage.update_deck_last_studied(id)?;
+                }
+                Some(deck)
+            } else {
+                None
+            };
             cram_mode(deck, &mut storage)
         }
-        Command::Gamble { deck } => {
-            let deck = get_deck(resolve_deck_source(deck.as_str()), &storage)?;
-            storage.update_user_last_active()?;
-            if let Some(id) = deck.id {
-                storage.update_deck_last_studied(id)?;
-            }
-            gauntlet_mode(deck, &mut storage)
-        }
-        Command::Gauntlet { deck } => {
+        Command::Gamble { deck } | Command::Gauntlet { deck } => {
             let deck = get_deck(resolve_deck_source(deck.as_str()), &storage)?;
             storage.update_user_last_active()?;
             if let Some(id) = deck.id {
@@ -396,6 +401,9 @@ fn main() -> anyhow::Result<()> {
         }
         Command::MCP {} => mcp::server::launch(storage),
         #[allow(unreachable_patterns)]
-        _ => Ok(()),
+        _ => {
+            println!("Unimplemented command");
+            Ok(())
+        }
     }
 }

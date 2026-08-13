@@ -51,7 +51,7 @@
   },
   {
     "text": "cram study mode using simple score with flashcard mode: flip, grade, next, repeat",
-    "completed": false,
+    "completed": true,
     "tags": [
       "+1/-1"
     ],
@@ -74,6 +74,12 @@
   {
     "text": "make sure new study methods are safe to commit to storage immediately in case of crash",
     "completed": true,
+    "tags": [],
+    "files": []
+  },
+  {
+    "text": "make tutorials for hosting the mcp server for different agentic applications",
+    "completed": false,
     "tags": [],
     "files": []
   }
