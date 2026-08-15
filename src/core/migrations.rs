@@ -77,10 +77,7 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
     let max_version = MIGRATIONS.iter().map(|m| m.version).max().unwrap_or(0);
 
     if applied.len() == MIGRATIONS.len() {
-        println!(
-            "[migrations] Schema up to date (version {}).",
-            max_version
-        );
+        println!("[migrations] Schema up to date (version {}).", max_version);
         return Ok(());
     }
 
@@ -109,7 +106,11 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
         // a no-op and continue so the version is still recorded.
         match result {
             Ok(()) => {}
-            Err(ref e) if e.to_string().to_lowercase().contains("duplicate column name") => {
+            Err(ref e)
+                if e.to_string()
+                    .to_lowercase()
+                    .contains("duplicate column name") =>
+            {
                 eprintln!(
                     "[migrations] Note: migration {} ({}) is a no-op — column already exists.",
                     migration.version, migration.name

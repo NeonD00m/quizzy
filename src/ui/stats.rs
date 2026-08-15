@@ -24,7 +24,7 @@ enum StatsViewState {
 fn truncate(s: &str, max_len: usize) -> String {
     if s.chars().count() > max_len {
         let truncated: String = s.chars().take(max_len - 3).collect();
-        return format!("{}...", truncated);
+        format!("{}...", truncated)
     } else {
         s.to_string()
     }
@@ -160,12 +160,12 @@ pub fn stats_mode(
                     vec![label.to_string(), count.to_string(), format!("{:.1}%", pct)]
                 };
 
-                table.add_row(row("Mature (Interval >= 7d)", summary.mature_count));
+                table.add_row(row("Mature (Stability >= 7d)", summary.mature_count));
                 table.add_row(row("Learning", summary.learning_count));
                 table.add_row(row("New", summary.new_count));
 
                 println!("\n--- Deck: {} ---\n{}", deck_name, table);
-                println!("Average Easiness: {:.2}", summary.average_easiness);
+                println!("Average Stability: {:.2} days", summary.average_easiness);
 
                 if !leeches.is_empty() {
                     println!("\nTop Leech Cards (Most Missed):");
@@ -221,19 +221,19 @@ pub fn stats_mode(
 
                 for c in cards {
                     let due_str = match c.fsrs {
-                        Some(stats) => Utc
+                        Some(stats) if stats.next_due > 0 => Utc
                             .timestamp_opt(stats.next_due, 0)
-                            .unwrap()
-                            .format("%Y-%m-%d")
-                            .to_string(),
-                        None => "Now".to_string(),
+                            .single()
+                            .map(|dt| dt.format("%Y-%m-%d").to_string())
+                            .unwrap_or_else(|| "New".to_string()),
+                        _ => "New".to_string(),
                     };
 
                     table.add_row(vec![
                         truncate(&c.term, 20),
                         truncate(&c.definition, 30),
                         c.learning_score.to_string(),
-                        format!("{}d", c.fsrs.map_or(0.0, |s| s.stability)),
+                        format!("{:.1}d", c.fsrs.map_or(0.0, |s| s.stability)),
                         format!("{:.2}", c.fsrs.map_or(0.0, |s| s.difficulty)),
                         due_str,
                     ]);

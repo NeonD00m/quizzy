@@ -82,5 +82,16 @@
     "completed": false,
     "tags": [],
     "files": []
+  },
+  {
+    "text": "check if they typed answer fast enough and mark as Easy if it is",
+    "completed": true,
+    "tags": [
+      "code-todo"
+    ],
+    "files": [
+      "src\\ui\\learn.rs",
+      "grade_response_time.py"
+    ]
   }
 ]

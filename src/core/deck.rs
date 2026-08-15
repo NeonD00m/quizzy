@@ -97,8 +97,8 @@ pub fn resolve_deck_source(arg: &str) -> DeckSource {
     }
 }
 
-fn read_deck_tsv(path: &PathBuf) -> anyhow::Result<Deck> {
-    let file = File::open(path.as_path()).context("Failed to open file.")?;
+fn read_deck_tsv(path: &Path) -> anyhow::Result<Deck> {
+    let file = File::open(path).context("Failed to open file.")?;
     Ok(Deck {
         name: path
             .file_stem()
@@ -147,8 +147,8 @@ fn read_deck_csv(path: &PathBuf) -> anyhow::Result<Deck> {
     })
 }
 
-fn read_deck_json(path: &PathBuf) -> anyhow::Result<Deck> {
-    let file = File::open(path.as_path()).context("Failed to open file.")?;
+fn read_deck_json(path: &Path) -> anyhow::Result<Deck> {
+    let file = File::open(path).context("Failed to open file.")?;
     let reader = BufReader::new(file);
     let json_deck: JsonDeck =
         serde_json::from_reader(reader).context("Failed to parse JSON deck.")?;

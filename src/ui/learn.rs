@@ -1,5 +1,5 @@
 use crate::core::deck::*;
-use crate::core::fsrs::{CardState, FsrsCard, FsrsEngine};
+use crate::core::fsrs::{CardState, FsrsCard, FsrsEngine, Rating};
 use crate::core::learn::*;
 use crate::core::storage::{FSRSStats, Storage};
 use crate::core::string_distance::string_distance;
@@ -11,12 +11,13 @@ use anyhow::Context;
 use comfy_table::{Table, presets::UTF8_FULL};
 use core::f64;
 use crossterm::event::KeyCode;
+use crossterm::style::Stylize;
 use rand::rngs::ThreadRng;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use std::collections::{HashMap, HashSet};
 use std::io::{Write as IoWrite, stdout};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 pub fn display_multiple_choice(choices: &[Card], ask_term: bool) {
     let (width, _) = crossterm::terminal::size().unwrap_or((80, 24));
@@ -81,8 +82,6 @@ pub fn display_feedback(response: &str, expected: &str, is_right: bool) {
     let width = width as usize;
     let midpoint = std::cmp::min(width / 2, 50);
     let max_col_width = midpoint.saturating_sub(4);
-
-    use crossterm::style::Stylize;
 
     println!();
     if is_right {
@@ -333,6 +332,7 @@ pub fn learn_mode(
             );
         }
 
+        let before = Instant::now();
         let response = match type_input("Type the answer or [ESC] ")? {
             Some(s) => s,
             None => {
@@ -340,6 +340,7 @@ pub fn learn_mode(
                 break;
             }
         };
+        let elapsed = Instant::now().duration_since(before).as_millis() as f64;
 
         let expected = if ask_term {
             card.definition.as_str()
@@ -355,13 +356,21 @@ pub fn learn_mode(
         let len = expected.trim().len().max(1) as f64;
         let distance_ratio = distance / len;
 
-        let grade: FSRSGrade;
+        let grade: Rating;
         println!();
         if distance_ratio <= 0.15 {
-            grade = FSRSGrade::Good;
+            // TODO: check if they typed answer fast enough and mark as Easy if it is
+            let expected_secs = expected.trim().len() as f64 / 3.3; // baseline 40 WPM speed
+            let target_time = expected_secs + 1.5; // reading buffer
+            grade = if elapsed / 1000.0 <= target_time {
+                Rating::Easy
+            } else if elapsed / 1000.0 <= target_time * 2.0 {
+                Rating::Good
+            } else {
+                Rating::Hard
+            };
             display_feedback(&response, expected, true);
         } else if distance_ratio <= 0.40 {
-            use crossterm::style::Stylize;
             println!("\n{}", "Close answer! Please self-grade:".yellow().bold());
             println!("   Your answer: {}", response);
             println!("   Expected:    {}", expected);
@@ -371,14 +380,14 @@ pub fn learn_mode(
 
             let choice = choice_input()?;
             grade = match choice {
-                KeyCode::Char('1') => FSRSGrade::Again,
-                KeyCode::Char('2') => FSRSGrade::Hard,
-                KeyCode::Char('3') => FSRSGrade::Good,
-                KeyCode::Char('4') => FSRSGrade::Easy,
-                _ => FSRSGrade::Hard,
+                KeyCode::Char('1') => Rating::Again,
+                KeyCode::Char('2') => Rating::Hard,
+                KeyCode::Char('3') => Rating::Good,
+                KeyCode::Char('4') => Rating::Easy,
+                _ => Rating::Hard,
             };
         } else {
-            grade = FSRSGrade::Again;
+            grade = Rating::Again;
             display_feedback(&response, expected, false);
         }
 
@@ -392,7 +401,7 @@ pub fn learn_mode(
             state: card_state,
         };
 
-        let sched = engine.review_card(fsrs_card, grade.to_rating(), now_secs);
+        let sched = engine.review_card(fsrs_card, grade, now_secs);
 
         fsrs.stability = sched.card.stability;
         fsrs.difficulty = sched.card.difficulty;
@@ -402,7 +411,7 @@ pub fn learn_mode(
         fsrs.last_review = sched.card.last_review;
         fsrs.next_due = sched.next_due;
 
-        let is_correct = grade != FSRSGrade::Again;
+        let is_correct = grade == Rating::Good || grade == Rating::Easy;
         if is_correct {
             session_corrects += 1;
         } else {
@@ -451,7 +460,7 @@ pub fn learn_mode(
     Ok(())
 }
 
-#[allow(dead_code)]
+#[allow(dead_code, clippy::too_many_arguments)]
 pub fn test_mode(
     deck: Deck,
     feedback: bool,

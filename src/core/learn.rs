@@ -12,46 +12,6 @@ use std::path::{Path, PathBuf};
 use std::thread::sleep;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crate::core::fsrs::Rating;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[repr(u8)]
-pub enum FSRSGrade {
-    Again = 1,
-    Hard = 2,
-    Good = 3,
-    Easy = 4,
-}
-
-impl FSRSGrade {
-    pub fn score_delta(&self) -> i64 {
-        match self {
-            FSRSGrade::Again => -3,
-            FSRSGrade::Hard => -1,
-            FSRSGrade::Good => 1,
-            FSRSGrade::Easy => 3,
-        }
-    }
-
-    pub fn to_rating(&self) -> Rating {
-        match self {
-            FSRSGrade::Again => Rating::Again,
-            FSRSGrade::Hard => Rating::Hard,
-            FSRSGrade::Good => Rating::Good,
-            FSRSGrade::Easy => Rating::Easy,
-        }
-    }
-
-    pub fn from_rating(rating: Rating) -> Self {
-        match rating {
-            Rating::Again => FSRSGrade::Again,
-            Rating::Hard => FSRSGrade::Hard,
-            Rating::Good => FSRSGrade::Good,
-            Rating::Easy => FSRSGrade::Easy,
-        }
-    }
-}
-
 /// Represents session performance deltas to be persisted across different study modes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -250,18 +210,6 @@ pub fn commit_payload_with_retries(
             }
         }
     }
-}
-
-#[deprecated(note = "Use commit_payload_with_retries instead")]
-pub fn commit_session_with_retries(
-    storage: &mut Storage,
-    updates: &[(i64, i64, i64)],
-    max_attempts: usize,
-) -> anyhow::Result<()> {
-    let payload = SessionPayload::Test {
-        updates: updates.to_vec(),
-    };
-    commit_payload_with_retries(storage, &payload, max_attempts)
 }
 
 /// Write failed session payload as JSON to a timestamped local file next to the DB.

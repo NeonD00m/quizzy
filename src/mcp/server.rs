@@ -222,7 +222,7 @@ impl McpServer {
             format!("New Cards (Unstudied): {}", summary.new_count),
             format!("Learning Cards: {}", summary.learning_count),
             format!("Mature Cards: {}", summary.mature_count),
-            format!("Average Easiness Factor: {:.2}", summary.average_easiness),
+            format!("Average Stability (Days): {:.2}", summary.average_easiness),
         ];
 
         if !leeches.is_empty() {

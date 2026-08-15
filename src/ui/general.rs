@@ -19,7 +19,9 @@ pub fn select_deck_by_name(
         storage
             .list_decks_detailed()?
             .into_iter()
-            .filter(|item| item.name == name_or_id || name_or_id.parse::<i64>().ok() == Some(item.id))
+            .filter(|item| {
+                item.name == name_or_id || name_or_id.parse::<i64>().ok() == Some(item.id)
+            })
             .collect()
     };
 
@@ -366,7 +368,7 @@ pub fn export(
     deck_name: String,
     file_path: Option<PathBuf>,
 ) -> anyhow::Result<()> {
-    let deck = get_deck(resolve_deck_source(deck_name.as_str()), &storage)?;
+    let deck = get_deck(resolve_deck_source(deck_name.as_str()), storage)?;
     if let Some(path) = file_path {
         println!("Exporting deck '{}' to {}...", deck.name, path.display());
         write_deck_to_file(&deck, path)?;

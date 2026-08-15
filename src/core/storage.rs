@@ -4,7 +4,6 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use rusqlite::OptionalExtension;
 use rusqlite::{Connection, OpenFlags, params};
-use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -48,7 +47,9 @@ pub struct CardStatRow {
     pub definition: String,
     pub learning_score: i64, // float to support fractional cram adjustments
     pub fsrs: Option<FSRSStats>,
+    #[allow(dead_code)]
     pub correct_count: i64,
+    #[allow(dead_code)]
     pub incorrect_count: i64,
 }
 
@@ -62,19 +63,15 @@ pub struct DeckListItem {
 
 #[derive(Debug, Clone)]
 pub struct DeckDashboardItem {
+    #[allow(dead_code)]
     pub id: i64,
     pub name: String,
     pub total_cards: i64,
     pub due_cards: i64,
     pub new_cards: i64,
+    #[allow(dead_code)]
     pub last_studied_at: Option<i64>,
 }
-
-pub type SessionDelta = (i64, i64, i64);
-
-// make learning score constants for correct and incorrect answers
-const CORRECT_ANSWER_SCORE: i64 = 3;
-const INCORRECT_ANSWER_SCORE: i64 = 1;
 
 // ============================= Schema =============================
 
@@ -571,7 +568,7 @@ impl Storage {
 
         for &(card_id, corrects, incorrects) in updates {
             // Calculate learning_score delta (+2 for correct, -1 for incorrect)
-            let score_delta = (corrects * 2) as f64 - (incorrects * 1) as f64;
+            let score_delta = (corrects * 2) as f64 - incorrects as f64;
 
             tx.execute(
                 "INSERT INTO card_stats (card_id, learning_score, correct_count, incorrect_count)
@@ -696,63 +693,6 @@ impl Storage {
         .context("Failed to update deck_stats.")?;
 
         tx.commit().context("Failed to commit transaction.")?;
-        Ok(())
-    }
-
-    /// Batch commit at the end of a learning session.
-    /// `updates` is a slice of tuples: (card_id, corrects_delta, incorrects_delta, Option<SM2Stats>)
-    pub fn commit_session_batch(&mut self, updates: &[(i64, i64, i64)]) -> Result<()> {
-        if updates.is_empty() {
-            return Ok(());
-        }
-
-        let now = now_secs();
-        let tx = self
-            .conn
-            .transaction()
-            .context("failed to start transaction")?;
-
-        let mut deck_deltas: HashMap<i64, (i64, i64)> = HashMap::new(); // deck_id -> (questions_total_delta, questions_correct_delta)
-
-        for (card_id, corrects, incorrects) in updates {
-            let score_delta = CORRECT_ANSWER_SCORE * corrects - INCORRECT_ANSWER_SCORE * incorrects;
-            tx.execute(
-                "UPDATE card_stats
-                 SET learning_score = learning_score + ?1,
-                     correct_count = correct_count + ?2,
-                     incorrect_count = incorrect_count + ?3,
-                     last_answered_at = ?4
-                 WHERE card_id = ?5",
-                params![score_delta, corrects, incorrects, now, card_id],
-            )
-            .with_context(|| format!("Failed to update card_stats for card_id {}.", card_id))?;
-
-            let deck_id: i64 = tx
-                .query_row(
-                    "SELECT deck_id FROM cards WHERE id = ?1",
-                    params![card_id],
-                    |r| r.get(0),
-                )
-                .with_context(|| format!("Failed to lookup deck_id for card_id {}.", card_id))?;
-
-            let entry = deck_deltas.entry(deck_id).or_insert((0, 0));
-            entry.0 += corrects + incorrects;
-            entry.1 += *corrects;
-        }
-
-        for (deck_id, (q_delta, correct_delta)) in deck_deltas {
-            tx.execute(
-                "UPDATE deck_stats
-                 SET questions_answered_total = questions_answered_total + ?1,
-                     questions_correct_total = questions_correct_total + ?2,
-                     last_studied_at = ?3
-                 WHERE deck_id = ?4",
-                params![q_delta, correct_delta, now, deck_id],
-            )
-            .with_context(|| format!("Failed to update deck_stats for deck_id {}.", deck_id))?;
-        }
-
-        tx.commit().context("Failed to commit batch transaction.")?;
         Ok(())
     }
 
@@ -961,21 +901,6 @@ impl Storage {
         Ok(())
     }
 
-    /// Return recorded confusions for a card: Vec<(mistaken_card_id, count)> ordered by count desc.
-    pub fn get_confusions(&self, card_id: i64) -> Result<Vec<(i64, i64)>> {
-        let mut stmt = self.conn.prepare(
-                "SELECT mistaken_card_id, count FROM card_confusions WHERE card_id = ?1 ORDER BY count DESC",
-            ).context("Failed to prepare get_confusions.")?;
-        let rows = stmt
-            .query_map(params![card_id], |r| Ok((r.get(0)?, r.get(1)?)))
-            .context("Failed to query confusions.")?;
-        let mut out = Vec::new();
-        for r in rows {
-            out.push(r.context("Failed to map confusion row.")?);
-        }
-        Ok(out)
-    }
-
     /// Fetches bi-directional confusions for a given card for faster accurate distractors.
     pub fn get_bidirectional_confusions(&self, card_id: i64) -> anyhow::Result<Vec<(i64, i64)>> {
         Ok(self
@@ -1091,16 +1016,16 @@ impl Storage {
 
     // ======================== Stats Reads (cont) =================
 
-    /// Summarize stats for a deck: New (0 reps), Learning (1-6 interval), Mature (>=7 interval).
+    /// Summarize stats for a deck under FSRS: New (0 reps), Learning (reps > 0, stability < 7d), Mature (stability >= 7d).
     pub fn get_deck_stats_summary(&self, deck_id: i64) -> Result<DeckStatsSummary> {
         self.conn
             .query_row(
                 "SELECT
                     COUNT(*),
-                    SUM(CASE WHEN s.repetitions = 0 THEN 1 ELSE 0 END),
-                    SUM(CASE WHEN s.repetitions > 0 AND s.interval < 7 THEN 1 ELSE 0 END),
-                    SUM(CASE WHEN s.interval >= 7 THEN 1 ELSE 0 END),
-                    AVG(s.easiness_factor)
+                    SUM(CASE WHEN s.repetition_count = 0 THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN s.repetition_count > 0 AND s.stability < 7.0 THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN s.repetition_count > 0 AND s.stability >= 7.0 THEN 1 ELSE 0 END),
+                    AVG(s.stability)
                  FROM cards c
                  JOIN card_stats s ON c.id = s.card_id
                  WHERE c.deck_id = ?1",
@@ -1111,7 +1036,7 @@ impl Storage {
                         new_count: r.get::<_, Option<i64>>(1)?.unwrap_or(0),
                         learning_count: r.get::<_, Option<i64>>(2)?.unwrap_or(0),
                         mature_count: r.get::<_, Option<i64>>(3)?.unwrap_or(0),
-                        average_easiness: r.get::<_, Option<f64>>(4)?.unwrap_or(2.5),
+                        average_easiness: r.get::<_, Option<f64>>(4)?.unwrap_or(0.0),
                     })
                 },
             )
@@ -1358,5 +1283,12 @@ mod tests {
         assert_eq!(dashboard.len(), 1);
         assert_eq!(dashboard[0].name, "Test Deck");
         assert_eq!(dashboard[0].total_cards, 1);
+
+        let stats_summary = storage.get_deck_stats_summary(deck_id).unwrap();
+        assert_eq!(stats_summary.total_cards, 1);
+        assert_eq!(stats_summary.new_count, 0);
+        assert_eq!(stats_summary.learning_count, 1);
+        assert_eq!(stats_summary.mature_count, 0);
+        assert!((stats_summary.average_easiness - 2.5).abs() < 1e-6);
     }
 }
