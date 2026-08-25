@@ -322,28 +322,29 @@ pub fn import_all(storage: &mut Storage, dir: PathBuf, overwrite: bool) -> anyho
             continue;
         }
         let deck = deck.unwrap();
-        if let Ok(existing) = storage.get_deck_by_name(deck.name.as_str()) {
-            if !overwrite {
+        match storage.find_deck_by_name(deck.name.as_str()) {
+            Ok(Some(existing)) => {
+                if !overwrite {
+                    println!(
+                        "Deck '{}' already exists. Use --overwrite to replace.",
+                        deck.name
+                    );
+                    skipped += 1;
+                    continue;
+                }
+                let id = existing.id.unwrap();
                 println!(
-                    "Deck '{}' already exists. Use --overwrite to replace.",
-                    deck.name
+                    "Deck ({}) '{}' already exists. Overwriting...",
+                    id, deck.name
                 );
-                skipped += 1;
-                continue;
+                if let Err(e) = storage.add_cards_to_deck_batch(id, deck.cards, true) {
+                    eprintln!("Failed to overwrite deck '{}': {}", deck.name, e);
+                    errors += 1;
+                    continue;
+                }
+                success += 1;
             }
-            let id = existing.id.unwrap();
-            println!(
-                "Deck ({}) '{}' already exists. Overwriting...",
-                id, deck.name
-            );
-            if let Err(e) = storage.add_cards_to_deck_batch(id, deck.cards, true) {
-                eprintln!("Failed to overwrite deck '{}': {}", deck.name, e);
-                errors += 1;
-                continue;
-            }
-            success += 1;
-        } else {
-            match storage.create_deck_from_core(deck, path.to_str()) {
+            Ok(None) => match storage.create_deck_from_core(deck, path.to_str()) {
                 Ok((id, name)) => {
                     println!("Created deck ({}) '{}' from file.", id, name);
                     success += 1;
@@ -352,6 +353,10 @@ pub fn import_all(storage: &mut Storage, dir: PathBuf, overwrite: bool) -> anyho
                     eprintln!("Failed to create deck from file {}: {}", path.display(), e);
                     errors += 1;
                 }
+            },
+            Err(e) => {
+                eprintln!("Database error while checking deck '{}': {}", deck.name, e);
+                errors += 1;
             }
         }
     }

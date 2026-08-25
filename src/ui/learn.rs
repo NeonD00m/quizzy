@@ -8,6 +8,7 @@ use crate::ui::{
     print_split_aligned,
 };
 use anyhow::Context;
+use chrono::{TimeZone, Utc};
 use comfy_table::{Table, presets::UTF8_FULL};
 use core::f64;
 use crossterm::event::KeyCode;
@@ -181,12 +182,51 @@ fn initial_fill(
     }
 }
 
+fn format_next_due(
+    due_cards: i64,
+    total_cards: i64,
+    next_due_at: Option<i64>,
+    now_secs: i64,
+) -> String {
+    if total_cards == 0 {
+        return "-".to_string();
+    }
+    if due_cards > 0 {
+        return "Now".to_string();
+    }
+    match next_due_at {
+        Some(ts) => {
+            let diff = ts - now_secs;
+            if diff <= 0 {
+                "Now".to_string()
+            } else if diff < 3600 {
+                format!("In {}m", (diff / 60).max(1))
+            } else if diff < 86400 {
+                format!("In {}h", diff / 3600)
+            } else if diff < 86400 * 7 {
+                format!("In {}d", diff / 86400)
+            } else {
+                Utc.timestamp_opt(ts, 0)
+                    .single()
+                    .map(|dt| dt.format("%Y-%m-%d").to_string())
+                    .unwrap_or_else(|| "Later".to_string())
+            }
+        }
+        None => "Caught up".to_string(),
+    }
+}
+
 pub fn learn_dashboard(storage: &mut Storage) -> anyhow::Result<()> {
     let items = storage.get_deck_dashboard_items()?;
     if items.is_empty() {
         println!("\nNo decks found in database. Create one with `quizzy new <name> <file>`.");
         return Ok(());
     }
+
+    let now_secs = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
 
     let mut table = Table::new();
     table.load_preset(UTF8_FULL);
@@ -196,15 +236,19 @@ pub fn learn_dashboard(storage: &mut Storage) -> anyhow::Result<()> {
         "Due Cards",
         "New Cards",
         "Total Cards",
+        "Next Due",
     ]);
 
     for (i, item) in items.iter().enumerate() {
+        let next_due_str =
+            format_next_due(item.due_cards, item.total_cards, item.next_due_at, now_secs);
         table.add_row(vec![
             format!("{}", i + 1),
             item.name.clone(),
             format!("{}", item.due_cards),
             format!("{}", item.new_cards),
             format!("{}", item.total_cards),
+            next_due_str,
         ]);
     }
 
@@ -241,8 +285,10 @@ pub fn learn_dashboard(storage: &mut Storage) -> anyhow::Result<()> {
                 stdout().flush().context("Failed to flush output.")?;
                 continue;
             }
+        } else if let Some(item) = items.iter().find(|it| it.name == input) {
+            item.name.clone()
         } else {
-            print!("\n\nPlease enter a number.\n");
+            print!("\n\nInvalid deck selection.\n");
             stdout().flush().context("Failed to flush output.")?;
             continue;
         };
@@ -283,7 +329,7 @@ pub fn learn_mode(
     let engine = FsrsEngine::default();
     let mut rng = thread_rng();
 
-    let now_secs = SystemTime::now()
+    let mut now_secs = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
@@ -311,9 +357,11 @@ pub fn learn_mode(
     let mut session_corrects: usize = 0;
     let mut session_incorrects: usize = 0;
     let mut session_reviews: usize = 0;
+    let mut due_reviewed_count: usize = 0;
 
     let mut index = 0;
     while index < queue.len() {
+        let current_index = index;
         let (card, mut fsrs) = queue[index].clone();
         index += 1;
 
@@ -401,6 +449,10 @@ pub fn learn_mode(
             state: card_state,
         };
 
+        now_secs = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
         let sched = engine.review_card(fsrs_card, grade, now_secs);
 
         fsrs.stability = sched.card.stability;
@@ -420,6 +472,9 @@ pub fn learn_mode(
         }
 
         session_reviews += 1;
+        if current_index < due_count {
+            due_reviewed_count += 1;
+        }
 
         if card_id > 0 {
             let entry = updates_map.entry(card_id).or_insert((fsrs, 0, 0, 0));
@@ -453,10 +508,18 @@ pub fn learn_mode(
         }
     }
 
-    println!(
-        "\nSession Complete! Reviewed {} cards ({} correct, {} again).",
-        session_reviews, session_corrects, session_incorrects
-    );
+    let unreviewed_due = due_count.saturating_sub(due_reviewed_count);
+    if unreviewed_due > 0 {
+        println!(
+            "\nSession Complete! Reviewed {} cards ({} correct, {} again, {} unreviewed).",
+            session_reviews, session_corrects, session_incorrects, unreviewed_due
+        );
+    } else {
+        println!(
+            "\nSession Complete! Reviewed {} cards ({} correct, {} again).",
+            session_reviews, session_corrects, session_incorrects
+        );
+    }
     Ok(())
 }
 

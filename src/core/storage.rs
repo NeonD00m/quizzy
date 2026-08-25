@@ -45,7 +45,7 @@ pub struct CardStatRow {
     pub card_id: i64,
     pub term: String,
     pub definition: String,
-    pub learning_score: i64, // float to support fractional cram adjustments
+    pub learning_score: i64,
     pub fsrs: Option<FSRSStats>,
     #[allow(dead_code)]
     pub correct_count: i64,
@@ -71,6 +71,7 @@ pub struct DeckDashboardItem {
     pub new_cards: i64,
     #[allow(dead_code)]
     pub last_studied_at: Option<i64>,
+    pub next_due_at: Option<i64>,
 }
 
 // ============================= Schema =============================
@@ -481,15 +482,25 @@ impl Storage {
             .context("Failed to query source_path for deck.")
     }
 
-    /// Get a deck by name (returns deck with card ids populated)
-    pub fn get_deck_by_name(&self, name: &str) -> Result<Deck> {
-        let deck_id: i64 = self
+    /// Find a deck by name if it exists (returns deck with card ids populated).
+    pub fn find_deck_by_name(&self, name: &str) -> Result<Option<Deck>> {
+        let deck_id: Option<i64> = self
             .conn
             .query_row("SELECT id FROM decks WHERE name = ?1", params![name], |r| {
                 r.get(0)
             })
-            .with_context(|| format!("Deck named '{}' not found.", name))?;
-        self.get_deck_by_id(deck_id)
+            .optional()
+            .context("Failed to query deck by name.")?;
+        match deck_id {
+            Some(id) => self.get_deck_by_id(id).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    /// Get a deck by name (returns deck with card ids populated)
+    pub fn get_deck_by_name(&self, name: &str) -> Result<Deck> {
+        self.find_deck_by_name(name)?
+            .ok_or_else(|| anyhow::anyhow!("Deck named '{}' not found.", name))
     }
 
     /// Get a deck by id (card ids are included)
@@ -568,7 +579,7 @@ impl Storage {
 
         for &(card_id, corrects, incorrects) in updates {
             // Calculate learning_score delta (+2 for correct, -1 for incorrect)
-            let score_delta = (corrects * 2) as f64 - incorrects as f64;
+            let score_delta = (corrects * 2) - incorrects;
 
             tx.execute(
                 "INSERT INTO card_stats (card_id, learning_score, correct_count, incorrect_count)
@@ -705,7 +716,7 @@ impl Storage {
         limit: usize,
     ) -> anyhow::Result<Vec<(Card, i64)>> {
         let mut stmt = self.conn.prepare(
-            "SELECT c.id, c.term, c.definition, COALESCE(s.learning_score, 0.0) as score
+            "SELECT c.id, c.term, c.definition, COALESCE(s.learning_score, 0) as score
                 FROM cards c
                 LEFT JOIN card_stats s ON c.id = s.card_id
                 WHERE c.deck_id = ?1
@@ -781,15 +792,16 @@ impl Storage {
     }
 
     /// Dashboard query: Returns summary stats for all saved decks including total cards,
-    /// due cards, new cards, and last studied timestamp.
+    /// due cards, new cards, last studied timestamp, and earliest next due timestamp.
     pub fn get_deck_dashboard_items(&self) -> anyhow::Result<Vec<DeckDashboardItem>> {
         let now = now_secs();
         let mut stmt = self.conn.prepare(
             "SELECT d.id, d.name,
                     COUNT(c.id) AS total_cards,
-                    SUM(CASE WHEN s.last_review IS NULL OR s.last_review = 0 OR s.next_due <= ?1 THEN 1 ELSE 0 END) AS due_cards,
-                    SUM(CASE WHEN s.repetition_count IS NULL OR s.repetition_count = 0 THEN 1 ELSE 0 END) AS new_cards,
-                    ds.last_studied_at
+                    SUM(CASE WHEN c.id IS NOT NULL AND (s.last_review IS NULL OR s.last_review = 0 OR s.next_due <= ?1) THEN 1 ELSE 0 END) AS due_cards,
+                    SUM(CASE WHEN c.id IS NOT NULL AND (s.repetition_count IS NULL OR s.repetition_count = 0) THEN 1 ELSE 0 END) AS new_cards,
+                    ds.last_studied_at,
+                    MIN(CASE WHEN c.id IS NOT NULL AND s.last_review > 0 AND s.next_due > ?1 THEN s.next_due ELSE NULL END) AS next_due_at
              FROM decks d
              LEFT JOIN cards c ON d.id = c.deck_id
              LEFT JOIN card_stats s ON c.id = s.card_id
@@ -798,24 +810,17 @@ impl Storage {
              ORDER BY due_cards DESC, d.name ASC",
         )?;
 
-        let rows = stmt
-            .query_map(params![now], |row| {
-                Ok(DeckDashboardItem {
-                    id: row.get(0)?,
-                    name: row.get(1)?,
-                    total_cards: row.get(2)?,
-                    due_cards: row.get(3)?,
-                    new_cards: row.get(4)?,
-                    last_studied_at: row.get(5)?,
-                })
-            })?
-            .filter(|res| {
-                if let Ok(i) = res {
-                    i.due_cards > 0
-                } else {
-                    false
-                }
-            });
+        let rows = stmt.query_map(params![now], |row| {
+            Ok(DeckDashboardItem {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                total_cards: row.get(2)?,
+                due_cards: row.get(3)?,
+                new_cards: row.get(4)?,
+                last_studied_at: row.get(5)?,
+                next_due_at: row.get(6)?,
+            })
+        })?;
 
         let mut out = Vec::new();
         for r in rows {
@@ -1290,5 +1295,75 @@ mod tests {
         assert_eq!(stats_summary.learning_count, 1);
         assert_eq!(stats_summary.mature_count, 0);
         assert!((stats_summary.average_easiness - 2.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_find_deck_by_name_and_weakest_cards_and_dashboard_zero_due() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+
+        let storage = Storage { conn };
+
+        // Test find_deck_by_name returns None when deck does not exist
+        assert!(storage.find_deck_by_name("NonExistent").unwrap().is_none());
+        assert!(storage.get_deck_by_name("NonExistent").is_err());
+
+        // Create deck
+        let deck_id: i64 = storage
+            .conn
+            .query_row(
+                "INSERT INTO decks (name) VALUES ('French') RETURNING id",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+
+        let card_id: i64 = storage
+            .conn
+            .query_row(
+                "INSERT INTO cards (deck_id, term, definition) VALUES (?1, 'Bonjour', 'Hello') RETURNING id",
+                params![deck_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+
+        // Test find_deck_by_name returns Some(Deck)
+        let found = storage
+            .find_deck_by_name("French")
+            .unwrap()
+            .expect("Deck should be found");
+        assert_eq!(found.id, Some(deck_id));
+        assert_eq!(found.name, "French");
+        assert_eq!(found.cards.len(), 1);
+
+        // Test get_weakest_cards when card_stats has no row for card (COALESCE integer)
+        let weakest = storage.get_weakest_cards(deck_id, 10).unwrap();
+        assert_eq!(weakest.len(), 1);
+        assert_eq!(weakest[0].0.term, "Bonjour");
+        assert_eq!(weakest[0].1, 0); // score should be 0 (integer)
+
+        // Commit review with next_due far in the future
+        let future_due = now_secs() + 100000;
+        let fsrs = FSRSStats {
+            stability: 5.0,
+            difficulty: 3.0,
+            repetition_count: 2,
+            last_review: now_secs(),
+            next_due: future_due,
+            lapses: 0,
+            state: 2,
+        };
+        storage
+            .commit_learn_session(&[(card_id, fsrs, 1, 0, 1)])
+            .unwrap();
+
+        // Dashboard should return this deck even when due_cards == 0
+        let dashboard = storage.get_deck_dashboard_items().unwrap();
+        assert_eq!(dashboard.len(), 1);
+        assert_eq!(dashboard[0].name, "French");
+        assert_eq!(dashboard[0].total_cards, 1);
+        assert_eq!(dashboard[0].due_cards, 0);
+        assert_eq!(dashboard[0].new_cards, 0);
+        assert_eq!(dashboard[0].next_due_at, Some(future_due));
     }
 }
