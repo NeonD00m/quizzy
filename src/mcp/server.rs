@@ -9,7 +9,6 @@ use rmcp::{
         ServerCapabilities, ServerInfo,
     },
     tool, tool_handler, tool_router,
-    transport::stdio,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -464,6 +463,88 @@ impl ServerHandler for McpServer {
     }
 }
 
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+
+async fn create_stdio_transport() -> (tokio::io::DuplexStream, tokio::io::DuplexStream) {
+    let (server_in_write, server_in_read) = tokio::io::duplex(65536);
+    let (server_out_read, server_out_write) = tokio::io::duplex(65536);
+
+    // Stdin reader & filter -> forwards to rmcp
+    tokio::spawn(async move {
+        let stdin = tokio::io::stdin();
+        let mut reader = BufReader::new(stdin);
+        let mut line = String::new();
+        let mut server_in = server_in_write;
+        let mut stdout = tokio::io::stdout();
+
+        while let Ok(n) = reader.read_line(&mut line).await {
+            if n == 0 {
+                break;
+            }
+
+            // Check if this is an Antigravity server/discover probe
+            if line.contains("server/discover") {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
+                    if v.get("method").and_then(|m| m.as_str()) == Some("server/discover") {
+                        let id = v.get("id").cloned().unwrap_or(serde_json::Value::Null);
+                        tracing::info!(
+                            "Intercepted Antigravity server/discover probe with id {:?}",
+                            id
+                        );
+                        let resp = serde_json::json!({
+                            "jsonrpc": "2.0",
+                            "id": id,
+                            "error": {
+                                "code": -32601,
+                                "message": "Method not found"
+                            }
+                        });
+                        let resp_str = format!("{}\n", resp);
+                        let _ = stdout.write_all(resp_str.as_bytes()).await;
+                        let _ = stdout.flush().await;
+                        line.clear();
+                        continue;
+                    }
+                }
+            }
+
+            // Forward line to rmcp
+            if let Err(e) = server_in.write_all(line.as_bytes()).await {
+                tracing::debug!("Error forwarding stdin to rmcp: {:?}", e);
+                break;
+            }
+            let _ = server_in.flush().await;
+            line.clear();
+        }
+    });
+
+    // rmcp server output -> Stdout
+    tokio::spawn(async move {
+        let mut reader = BufReader::new(server_out_read);
+        let mut stdout = tokio::io::stdout();
+        let mut buffer = [0u8; 8192];
+
+        loop {
+            match reader.read(&mut buffer).await {
+                Ok(0) => break,
+                Ok(n) => {
+                    if let Err(e) = stdout.write_all(&buffer[..n]).await {
+                        tracing::debug!("Error writing to stdout: {:?}", e);
+                        break;
+                    }
+                    let _ = stdout.flush().await;
+                }
+                Err(e) => {
+                    tracing::debug!("Error reading from rmcp server output: {:?}", e);
+                    break;
+                }
+            }
+        }
+    });
+
+    (server_in_read, server_out_write)
+}
+
 /// launch the mcp server with tokio and rmcp
 #[tokio::main]
 pub async fn launch(storage: Storage) -> anyhow::Result<()> {
@@ -475,9 +556,11 @@ pub async fn launch(storage: Storage) -> anyhow::Result<()> {
         .try_init();
     tracing::info!("Starting Quizzy MCP Server");
 
-    // create instance of MCP server on stdio
+    let transport = create_stdio_transport().await;
+
+    // create instance of MCP server on stdio with probe filtering
     let service = McpServer::new(storage)
-        .serve(stdio())
+        .serve(transport)
         .await
         .inspect_err(|e| {
             tracing::error!("serving error: {:?}", e);
