@@ -175,9 +175,10 @@ pub fn read_deck_from_file(path: &PathBuf) -> anyhow::Result<Deck> {
         "json" => read_deck_json(path),
         "txt" => read_deck_tsv(path),
         _ => {
-            println!(
-                "Unknown file extension '{}', defaulting to TSV format.",
-                ext
+            tracing::warn!(
+                target: "quizzy::deck",
+                extension = %ext,
+                "Unknown file extension, defaulting to TSV format."
             );
             read_deck_tsv(path)
         }
@@ -236,9 +237,10 @@ pub fn write_deck_to_file(deck: &Deck, path: PathBuf) -> anyhow::Result<()> {
         "json" => write_deck_json(deck, path),
         "txt" => write_deck_tsv(deck, path),
         _ => {
-            println!(
-                "Unknown file extension '{}', defaulting to TSV format.",
-                ext
+            tracing::warn!(
+                target: "quizzy::deck",
+                extension = %ext,
+                "Unknown file extension, defaulting to TSV format."
             );
             write_deck_tsv(deck, path)
         }

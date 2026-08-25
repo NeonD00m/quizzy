@@ -200,9 +200,13 @@ pub fn commit_payload_with_retries(
                     return Err(e);
                 }
 
-                eprintln!(
-                    "commit_payload_with_retries attempt {}/{} failed with transient error: {}. Retrying in {}ms...",
-                    attempt, max_attempts, err_str, backoff_ms
+                tracing::warn!(
+                    target: "quizzy::learn",
+                    attempt = attempt,
+                    max_attempts = max_attempts,
+                    error = %err_str,
+                    backoff_ms = backoff_ms,
+                    "commit_payload_with_retries transient failure, retrying"
                 );
 
                 sleep(Duration::from_millis(backoff_ms));

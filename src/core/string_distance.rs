@@ -7,7 +7,10 @@ pub fn string_distance(given: &str, expected: &str) -> u8 {
     } else if given.is_empty() {
         return expected.len() as u8;
     } else if expected.is_empty() {
-        println!("Expected string length should probably not be zero.");
+        tracing::debug!(
+            target: "quizzy::string_distance",
+            "Expected string length is zero."
+        );
         return given.len() as u8;
     }
 

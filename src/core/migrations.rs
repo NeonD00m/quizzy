@@ -77,7 +77,11 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
     let max_version = MIGRATIONS.iter().map(|m| m.version).max().unwrap_or(0);
 
     if applied.len() == MIGRATIONS.len() {
-        println!("[migrations] Schema up to date (version {}).", max_version);
+        tracing::debug!(
+            target: "quizzy::migrations",
+            "Schema up to date (version {}).",
+            max_version
+        );
         return Ok(());
     }
 
@@ -86,9 +90,11 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
             continue;
         }
 
-        println!(
-            "[migrations] Applying migration {}: {}...",
-            migration.version, migration.name
+        tracing::info!(
+            target: "quizzy::migrations",
+            version = migration.version,
+            name = migration.name,
+            "Applying database migration"
         );
 
         // Disable foreign keys — required by SQLite for table-rebuild migrations.
@@ -111,9 +117,11 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
                     .to_lowercase()
                     .contains("duplicate column name") =>
             {
-                eprintln!(
-                    "[migrations] Note: migration {} ({}) is a no-op — column already exists.",
-                    migration.version, migration.name
+                tracing::warn!(
+                    target: "quizzy::migrations",
+                    version = migration.version,
+                    name = migration.name,
+                    "Migration is a no-op — column already exists."
                 );
             }
             Err(e) => {
@@ -146,9 +154,11 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
         conn.pragma_update(None, "foreign_keys", "ON")
             .context("Failed to re-enable foreign_keys after migration")?;
 
-        println!(
-            "[migrations] Applied migration {}: {}.",
-            migration.version, migration.name
+        tracing::info!(
+            target: "quizzy::migrations",
+            version = migration.version,
+            name = migration.name,
+            "Applied database migration successfully"
         );
     }
 

@@ -467,12 +467,12 @@ impl ServerHandler for McpServer {
 /// launch the mcp server with tokio and rmcp
 #[tokio::main]
 pub async fn launch(storage: Storage) -> anyhow::Result<()> {
-    // initialize stdout logging
-    tracing_subscriber::fmt()
+    // initialize stdout logging (to stderr)
+    let _ = tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env().add_directive(tracing::Level::DEBUG.into()))
         .with_writer(std::io::stderr)
         .with_ansi(false)
-        .init();
+        .try_init();
     tracing::info!("Starting Quizzy MCP Server");
 
     // create instance of MCP server on stdio
