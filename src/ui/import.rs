@@ -82,7 +82,7 @@ pub fn import_from_quizlet(
     let mut deck = Deck::from_cards(cards);
     deck.name = name;
 
-    storage.create_deck_from_core(deck, None, None)?;
+    storage.create_deck_from_core(deck, None)?;
     println!("Deck successfully saved to registry.");
     Ok(())
 }

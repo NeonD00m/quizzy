@@ -133,7 +133,7 @@ pub fn choice_input() -> anyhow::Result<KeyCode> {
     Ok(KeyCode::Esc)
 }
 
-pub fn enter_input() -> anyhow::Result<KeyCode> {
+pub fn key_input(keycode: KeyCode) -> anyhow::Result<KeyCode> {
     if !std::io::stdin().is_terminal() {
         let mut input = String::new();
         std::io::stdin().read_line(&mut input)?;
@@ -141,7 +141,7 @@ pub fn enter_input() -> anyhow::Result<KeyCode> {
         if trimmed == "q" || trimmed == "exit" || trimmed == "quit" || trimmed == "esc" {
             return Ok(KeyCode::Esc);
         }
-        return Ok(KeyCode::Enter);
+        return Ok(keycode);
     }
 
     let _guard = RawModeGuard::new();
@@ -154,11 +154,15 @@ pub fn enter_input() -> anyhow::Result<KeyCode> {
         {
             return Ok(KeyCode::Esc);
         }
-        if matches!(event.code, KeyCode::Esc | KeyCode::Enter) {
+        if event.code == KeyCode::Esc || event.code == keycode {
             return Ok(event.code);
         }
     }
     Ok(KeyCode::Esc)
+}
+
+pub fn enter_input() -> anyhow::Result<KeyCode> {
+    key_input(KeyCode::Enter)
 }
 
 pub enum RoundAction {

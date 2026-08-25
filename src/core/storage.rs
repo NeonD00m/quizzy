@@ -1,9 +1,9 @@
 use crate::core::deck::{Card, Deck, DeckSource, read_deck_from_file};
+use crate::core::migrations::run_migrations;
 use anyhow::{Context, Result};
 use chrono::Utc;
 use rusqlite::OptionalExtension;
 use rusqlite::{Connection, OpenFlags, params};
-use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -16,15 +16,41 @@ pub struct DeckStatsSummary {
     pub average_easiness: f64,
 }
 
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub struct FSRSStats {
+    pub stability: f64,
+    pub difficulty: f64,
+    pub repetition_count: i64,
+    pub last_review: i64,
+    pub next_due: i64,
+    pub lapses: i64,
+    pub state: u8,
+}
+
+impl Default for FSRSStats {
+    fn default() -> Self {
+        Self {
+            stability: 0.0,
+            difficulty: 0.0,
+            repetition_count: 0,
+            last_review: 0,
+            next_due: 0,
+            lapses: 0,
+            state: 0,
+        }
+    }
+}
+
 pub struct CardStatRow {
-    #[allow(dead_code)]
     pub card_id: i64,
     pub term: String,
     pub definition: String,
     pub learning_score: i64,
-    pub interval: i64,
-    pub easiness: f64,
-    pub next_due: i64,
+    pub fsrs: Option<FSRSStats>,
+    #[allow(dead_code)]
+    pub correct_count: i64,
+    #[allow(dead_code)]
+    pub incorrect_count: i64,
 }
 
 pub struct DeckListItem {
@@ -35,13 +61,23 @@ pub struct DeckListItem {
     pub updated_at: i64,
 }
 
-pub type SessionDelta = (i64, i64, i64, Option<crate::core::learn::SM2Stats>);
+#[derive(Debug, Clone)]
+pub struct DeckDashboardItem {
+    #[allow(dead_code)]
+    pub id: i64,
+    pub name: String,
+    pub total_cards: i64,
+    pub due_cards: i64,
+    pub new_cards: i64,
+    #[allow(dead_code)]
+    pub last_studied_at: Option<i64>,
+    pub next_due_at: Option<i64>,
+}
 
-// make learning score constants for correct and incorrect answers
-const CORRECT_ANSWER_SCORE: i64 = 3;
-const INCORRECT_ANSWER_SCORE: i64 = 1;
+// ============================= Schema =============================
 
-/// Schema initialized by `init_db`
+/// Base schema applied on first open. Subsequent structural changes are
+/// handled by versioned migrations in `core::migrations`.
 const SCHEMA: &str = r#"
 PRAGMA foreign_keys = ON;
 
@@ -51,8 +87,7 @@ CREATE TABLE IF NOT EXISTS decks (
     description TEXT,
     created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
     updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
-    source_path TEXT,
-    source_hash TEXT
+    source_path TEXT
 );
 
 CREATE TABLE IF NOT EXISTS cards (
@@ -71,11 +106,13 @@ CREATE TABLE IF NOT EXISTS card_stats (
     learning_score INTEGER NOT NULL DEFAULT 0,
     correct_count INTEGER NOT NULL DEFAULT 0,
     incorrect_count INTEGER NOT NULL DEFAULT 0,
-    last_answered_at INTEGER,
-    interval INTEGER NOT NULL DEFAULT 0,
-    repetitions INTEGER NOT NULL DEFAULT 0,
-    easiness_factor REAL NOT NULL DEFAULT 2.5,
-    next_due INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+    stability REAL NOT NULL DEFAULT 0.0,
+    difficulty REAL NOT NULL DEFAULT 0.0,
+    repetition_count INTEGER NOT NULL DEFAULT 0,
+    last_review INTEGER NOT NULL DEFAULT 0,
+    next_due INTEGER NOT NULL DEFAULT 0,
+    lapses INTEGER NOT NULL DEFAULT 0,
+    state INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_card_stats_learning_score ON card_stats(learning_score);
@@ -103,7 +140,9 @@ CREATE TABLE IF NOT EXISTS user_profile (
 );
 "#;
 
-/// wrapper around rusqlite connection exposing the repository API
+// ===================== Storage Struct & Lifecycle =====================
+
+/// Wrapper around a rusqlite connection exposing the repository API.
 pub struct Storage {
     pub conn: Connection,
 }
@@ -187,123 +226,6 @@ impl Storage {
         Ok(())
     }
 
-    /// Find unsaved session files written by fallback logic.
-    /// They live next to the DB file and match `quizzy_failed_session_*.log`.
-    pub fn failed_session_files(&self) -> Result<Vec<std::path::PathBuf>> {
-        let mut dir = db_path_from_env_or_default();
-        // We want the directory containing the DB.
-        if let Some(parent) = dir.parent() {
-            dir = parent.to_path_buf();
-        } else {
-            dir = std::path::PathBuf::from(".");
-        }
-
-        let mut out = Vec::new();
-        for entry in
-            std::fs::read_dir(&dir).context("Failed to read DB directory for failed sessions.")?
-        {
-            let entry = entry.context("Failed to read directory entry.")?;
-            let p = entry.path();
-            if let Some(name) = p.file_name().and_then(|n| n.to_str())
-                && name.starts_with("quizzy_failed_session_")
-                && name.ends_with(".log")
-            {
-                out.push(p);
-            }
-        }
-        Ok(out)
-    }
-
-    /// Parse a failed session file created by `write_failed_session_file`.
-    /// Format expected: each line `card_id,corrects,incorrects,sm2_json`
-    pub fn read_failed_session_file(&self, path: &std::path::Path) -> Result<Vec<SessionDelta>> {
-        let s = std::fs::read_to_string(path)
-            .with_context(|| format!("Failed to read failed session file {}.", path.display()))?;
-        let mut out = Vec::new();
-        for (line_number, line) in s.lines().enumerate() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            let parts: Vec<&str> = line.split(',').collect();
-            if parts.len() != 4 {
-                // Compatibility check: old format has 3 parts
-                if parts.len() == 3 {
-                    let a: i64 = parts[0].trim().parse().with_context(|| {
-                        format!(
-                            "Invalid card_id in {} line {}.",
-                            path.display(),
-                            line_number + 1
-                        )
-                    })?;
-                    let b: i64 = parts[1].trim().parse().with_context(|| {
-                        format!(
-                            "Invalid corrects in {} line {}.",
-                            path.display(),
-                            line_number + 1
-                        )
-                    })?;
-                    let c: i64 = parts[2].trim().parse().with_context(|| {
-                        format!(
-                            "Invalid incorrects in {} line {}.",
-                            path.display(),
-                            line_number + 1
-                        )
-                    })?;
-                    out.push((a, b, c, None));
-                    continue;
-                }
-                return Err(anyhow::anyhow!(
-                    "Invalid format in {} at line {}. Expected 4 columns.",
-                    path.display(),
-                    line_number + 1
-                ));
-            }
-            let a: i64 = parts[0].trim().parse().with_context(|| {
-                format!(
-                    "Invalid card_id in {} line {}.",
-                    path.display(),
-                    line_number + 1
-                )
-            })?;
-            let b: i64 = parts[1].trim().parse().with_context(|| {
-                format!(
-                    "Invalid corrects in {} line {}.",
-                    path.display(),
-                    line_number + 1
-                )
-            })?;
-            let c: i64 = parts[2].trim().parse().with_context(|| {
-                format!(
-                    "Invalid incorrects in {} line {}.",
-                    path.display(),
-                    line_number + 1
-                )
-            })?;
-            let d_str = parts[3].trim();
-            let d: Option<crate::core::learn::SM2Stats> = if d_str == "NONE" {
-                None
-            } else {
-                Some(serde_json::from_str(d_str).with_context(|| {
-                    format!(
-                        "Invalid SM2Stats JSON in {} line {}.",
-                        path.display(),
-                        line_number + 1
-                    )
-                })?)
-            };
-            out.push((a, b, c, d));
-        }
-        Ok(out)
-    }
-
-    /// Remove a failed session file after replay or if user discards it.
-    pub fn remove_failed_session_file(&self, path: &Path) -> Result<()> {
-        std::fs::remove_file(path)
-            .with_context(|| format!("Failed to remove failed session file {}.", path.display()))?;
-        Ok(())
-    }
-
     /// Open or create the DB at the canonical path and initialize schema.
     pub fn open_default() -> Result<Self> {
         let path = db_path_from_env_or_default();
@@ -326,6 +248,8 @@ impl Storage {
 
         Ok(Self { conn })
     }
+
+    // ========================== Deck CRUD ==========================
 
     /// List decks (id, name)
     pub fn list_decks(&self) -> Result<Vec<(i64, String)>> {
@@ -379,19 +303,17 @@ impl Storage {
         &mut self,
         deck: Deck,
         source_path: Option<&str>,
-        source_hash: Option<&str>,
-    ) -> Result<i64> {
+    ) -> Result<(i64, String)> {
         let now = now_secs();
-        self.conn.execute(
-            "INSERT INTO decks (name, description, created_at, updated_at, source_path, source_hash) VALUES (?1, ?2, ?3, ?3, ?4, ?5)",
-            params![deck.name, None::<&str>, now, source_path, source_hash],
-        ).context("Failed to insert deck row.")?;
-        let deck_id = self.conn.last_insert_rowid();
-
         let tx = self
             .conn
             .transaction()
-            .context("Failed to start transaction for deck insert.")?;
+            .context("Failed to start transaction for deck creation.")?;
+        tx.execute(
+            "INSERT INTO decks (name, description, created_at, updated_at, source_path) VALUES (?1, ?2, ?3, ?3, ?4)",
+            params![deck.name, None::<&str>, now, source_path],
+        ).context("Failed to insert deck row.")?;
+        let deck_id = tx.last_insert_rowid();
         for c in deck.cards {
             tx.execute(
                 "INSERT INTO cards (deck_id, term, definition, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)",
@@ -412,33 +334,58 @@ impl Storage {
         tx.commit()
             .context("Failed to commit create_deck transaction.")?;
 
-        Ok(deck_id)
+        Ok((deck_id, deck.name))
     }
 
     /// Add a single card to a deck
-    pub fn add_card_to_deck(&mut self, deck_id: i64, term: &str, definition: &str) -> Result<i64> {
+    pub fn add_card_to_deck(&mut self, deck_id: i64, term: &str, definition: &str) -> Result<()> {
         let now = now_secs();
-        self.conn.execute(
+        let tx = self
+            .conn
+            .transaction()
+            .context("Failed to start transaction for single card insert.")?;
+        tx.execute(
             "INSERT INTO cards (deck_id, term, definition, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)",
             params![deck_id, term, definition, now],
         ).context("Failed to insert card.")?;
-        let card_id = self.conn.last_insert_rowid();
-        self.conn
-            .execute(
-                "INSERT INTO card_stats (card_id) VALUES (?1)",
-                params![card_id],
-            )
-            .context("Failed to insert card_stats.")?;
-        Ok(card_id)
+        let card_id = tx.last_insert_rowid();
+        tx.execute(
+            "INSERT INTO card_stats (card_id) VALUES (?1)",
+            params![card_id],
+        )
+        .context("Failed to insert card_stats.")?;
+        tx.execute(
+            "UPDATE decks SET updated_at = ?1 WHERE id = ?2",
+            params![now, deck_id],
+        )
+        .context("Failed to update deck updated_at.")?;
+        tx.commit()
+            .context("Failed to commit single card insert transaction.")?;
+        Ok(())
     }
 
     /// Add multiple cards to a deck in a single transaction
-    pub fn add_cards_to_deck_batch(&mut self, deck_id: i64, cards: Vec<Card>) -> Result<()> {
+    pub fn add_cards_to_deck_batch(
+        &mut self,
+        deck_id: i64,
+        cards: Vec<Card>,
+        clear: bool,
+    ) -> Result<()> {
         let now = now_secs();
         let tx = self
             .conn
             .transaction()
             .context("Failed to start transaction for batch card insert.")?;
+        if clear {
+            tx.execute("DELETE FROM cards WHERE deck_id = ?1", params![deck_id])
+                .context("Failed to clear cards from deck.")?;
+            tx
+                .execute(
+                    "UPDATE deck_stats SET questions_answered_total = 0, questions_correct_total = 0, last_studied_at = NULL WHERE deck_id = ?1",
+                    params![deck_id],
+                )
+                .context("Failed to reset deck stats.")?;
+        }
         for c in cards {
             tx.execute(
                 "INSERT INTO cards (deck_id, term, definition, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)",
@@ -451,6 +398,11 @@ impl Storage {
             )
             .context("Failed to insert card_stats in batch.")?;
         }
+        tx.execute(
+            "UPDATE decks SET updated_at = ?1 WHERE id = ?2",
+            params![now, deck_id],
+        )
+        .context("Failed to update deck updated_at.")?;
         tx.commit()
             .context("Failed to commit batch card insert transaction.")?;
         Ok(())
@@ -458,24 +410,51 @@ impl Storage {
 
     /// Remove a card by id
     pub fn remove_card(&mut self, card_id: i64) -> Result<()> {
-        self.conn
-            .execute("DELETE FROM cards WHERE id = ?1", params![card_id])
+        let tx = self
+            .conn
+            .transaction()
+            .context("Failed to start transaction for card remove.")?;
+        let deck_id: i64 = tx
+            .query_row(
+                "SELECT deck_id FROM cards WHERE id = ?1",
+                params![card_id],
+                |r| r.get(0),
+            )
+            .context("Failed to lookup deck_id for card.")?;
+        tx.execute(
+            "UPDATE decks SET updated_at = ?1 WHERE id = ?2",
+            params![now_secs(), deck_id],
+        )
+        .context("Failed to update deck updated_at.")?;
+        tx.execute("DELETE FROM cards WHERE id = ?1", params![card_id])
             .context("Failed to delete card.")?;
+        tx.commit()
+            .context("Failed to commit card remove transaction.")?;
         Ok(())
     }
 
     /// Remove all cards from a deck
     pub fn clear_deck(&mut self, deck_id: i64) -> Result<()> {
-        self.conn
-            .execute("DELETE FROM cards WHERE deck_id = ?1", params![deck_id])
+        let tx = self
+            .conn
+            .transaction()
+            .context("Failed to start transaction for clearing deck.")?;
+        tx.execute("DELETE FROM cards WHERE deck_id = ?1", params![deck_id])
             .context("Failed to clear cards from deck.")?;
         // Also clear deck stats
-        self.conn
+        tx
             .execute(
                 "UPDATE deck_stats SET questions_answered_total = 0, questions_correct_total = 0, last_studied_at = NULL WHERE deck_id = ?1",
                 params![deck_id],
             )
             .context("Failed to reset deck stats.")?;
+        tx.execute(
+            "UPDATE decks SET updated_at = ?1 WHERE id = ?2",
+            params![now_secs(), deck_id],
+        )
+        .context("Failed to update deck updated_at.")?;
+        tx.commit()
+            .context("Failed to commit card remove transaction.")?;
         Ok(())
     }
 
@@ -491,15 +470,37 @@ impl Storage {
         Ok(())
     }
 
-    /// Get a deck by name (returns deck with card ids populated)
-    pub fn get_deck_by_name(&self, name: &str) -> Result<Deck> {
-        let deck_id: i64 = self
+    /// Return the `source_path` recorded for a deck (if any).
+    pub fn get_deck_source_path(&self, deck_id: i64) -> Result<Option<String>> {
+        self.conn
+            .query_row(
+                "SELECT source_path FROM decks WHERE id = ?1",
+                params![deck_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .context("Failed to query source_path for deck.")
+    }
+
+    /// Find a deck by name if it exists (returns deck with card ids populated).
+    pub fn find_deck_by_name(&self, name: &str) -> Result<Option<Deck>> {
+        let deck_id: Option<i64> = self
             .conn
             .query_row("SELECT id FROM decks WHERE name = ?1", params![name], |r| {
                 r.get(0)
             })
-            .with_context(|| format!("Deck named '{}' not found.", name))?;
-        self.get_deck_by_id(deck_id)
+            .optional()
+            .context("Failed to query deck by name.")?;
+        match deck_id {
+            Some(id) => self.get_deck_by_id(id).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    /// Get a deck by name (returns deck with card ids populated)
+    pub fn get_deck_by_name(&self, name: &str) -> Result<Deck> {
+        self.find_deck_by_name(name)?
+            .ok_or_else(|| anyhow::anyhow!("Deck named '{}' not found.", name))
     }
 
     /// Get a deck by id (card ids are included)
@@ -541,27 +542,123 @@ impl Storage {
 
     /// Delete a deck by id and its associated stats
     pub fn delete_deck_by_id(&mut self, deck_id: i64) -> Result<()> {
-        self.delete_stats_by_deck_id(deck_id)?;
-        self.conn
-            .execute("DELETE FROM decks WHERE id = ?1", params![deck_id])
+        let tx = self
+            .conn
+            .transaction()
+            .context("Failed to start transaction for deleting deck.")?;
+        tx.execute(
+            "DELETE FROM deck_stats WHERE deck_id = ?1",
+            params![deck_id],
+        )
+        .context("Failed to delete deck_stats.")?;
+        tx.execute(
+            "DELETE FROM card_stats WHERE card_id IN (SELECT id FROM cards WHERE deck_id = ?1)",
+            params![deck_id],
+        )
+        .context("Failed to delete card_stats.")?;
+        tx.execute("DELETE FROM decks WHERE id = ?1", params![deck_id])
             .context("Failed to delete deck.")?;
+        tx.commit()
+            .context("Failed to commit transaction for deleting deck.")?;
         Ok(())
     }
 
-    /// Delete stats for a deck (deck_stats and card_stats)
-    pub fn delete_stats_by_deck_id(&mut self, deck_id: i64) -> Result<()> {
-        self.conn
-            .execute(
-                "DELETE FROM deck_stats WHERE deck_id = ?1",
-                params![deck_id],
-            )
-            .context("Failed to delete deck_stats.")?;
-        self.conn
-            .execute(
-                "DELETE FROM card_stats WHERE card_id IN (SELECT id FROM cards WHERE deck_id = ?1)",
-                params![deck_id],
-            )
-            .context("Failed to delete card_stats.")?;
+    // ========================= Card CRUD ==========================
+
+    // (add_card_to_deck, add_cards_to_deck_batch, remove_card, clear_deck,
+    //  update_card are above in the file — already grouped below Deck CRUD)
+
+    // ======================== Session Commits ======================
+
+    /// Test mode commit: Updates all-time counts and learning_score (+2 / -1).
+    pub fn commit_test_session(
+        &self,
+        updates: &[(i64, i64, i64)], // (card_id, corrects, incorrects)
+    ) -> anyhow::Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+
+        for &(card_id, corrects, incorrects) in updates {
+            // Calculate learning_score delta (+2 for correct, -1 for incorrect)
+            let score_delta = (corrects * 2) - incorrects;
+
+            tx.execute(
+                "INSERT INTO card_stats (card_id, learning_score, correct_count, incorrect_count)
+                    VALUES (?1, ?2, ?3, ?4)
+                    ON CONFLICT(card_id) DO UPDATE SET
+                    learning_score = learning_score + ?2,
+                    correct_count = correct_count + ?3,
+                    incorrect_count = incorrect_count + ?4",
+                params![card_id, score_delta, corrects, incorrects],
+            )?;
+        }
+
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Cram mode commit: Updates learning_score with lighter weights (+1 / -1).
+    pub fn commit_cram_session(
+        &self,
+        updates: &[(i64, i64)], // (card_id, score_delta) where score_delta = (corrects * 1) - (incorrects * 1)
+    ) -> anyhow::Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+
+        for &(card_id, score_delta) in updates {
+            tx.execute(
+                "INSERT INTO card_stats (card_id, learning_score)
+                    VALUES (?1, ?2)
+                    ON CONFLICT(card_id) DO UPDATE SET
+                    learning_score = learning_score + ?2",
+                params![card_id, score_delta],
+            )?;
+        }
+
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Learn mode commit: Updates FSRS metrics, last_review/next_due, all-time stats, and learning_score.
+    pub fn commit_learn_session(
+        &self,
+        updates: &[(i64, FSRSStats, i64, i64, i64)], // (card_id, fsrs_stats, corrects, incorrects, score_delta)
+    ) -> anyhow::Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+
+        for (card_id, fsrs, corrects, incorrects, score_delta) in updates {
+            tx.execute(
+                "INSERT INTO card_stats (
+                    card_id, learning_score, stability, difficulty,
+                    repetition_count, last_review, next_due, lapses, state, correct_count, incorrect_count
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                ON CONFLICT(card_id) DO UPDATE SET
+                    learning_score = learning_score + ?2,
+                    stability = ?3,
+                    difficulty = ?4,
+                    repetition_count = ?5,
+                    last_review = ?6,
+                    next_due = ?7,
+                    lapses = ?8,
+                    state = ?9,
+                    correct_count = correct_count + ?10,
+                    incorrect_count = incorrect_count + ?11",
+                params![
+                    card_id,
+                    score_delta,
+                    fsrs.stability,
+                    fsrs.difficulty,
+                    fsrs.repetition_count,
+                    fsrs.last_review,
+                    fsrs.next_due,
+                    fsrs.lapses,
+                    fsrs.state,
+                    corrects,
+                    incorrects
+                ],
+            )?;
+        }
+
+        tx.commit()?;
         Ok(())
     }
 
@@ -610,93 +707,129 @@ impl Storage {
         Ok(())
     }
 
-    /// Batch commit at the end of a learning session.
-    /// `updates` is a slice of tuples: (card_id, corrects_delta, incorrects_delta, Option<SM2Stats>)
-    pub fn commit_session_batch(
-        &mut self,
-        updates: &[(i64, i64, i64, Option<crate::core::learn::SM2Stats>)],
-    ) -> Result<()> {
-        if updates.is_empty() {
-            return Ok(());
-        }
+    // ========================== Stats Reads =========================
 
-        let now = now_secs();
-        let tx = self
-            .conn
-            .transaction()
-            .context("failed to start transaction")?;
+    /// Cram mode: Fetch cards for a deck ordered by lowest learning_score first.
+    pub fn get_weakest_cards(
+        &self,
+        deck_id: i64,
+        limit: usize,
+    ) -> anyhow::Result<Vec<(Card, i64)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT c.id, c.term, c.definition, COALESCE(s.learning_score, 0) as score
+                FROM cards c
+                LEFT JOIN card_stats s ON c.id = s.card_id
+                WHERE c.deck_id = ?1
+                ORDER BY score ASC
+                LIMIT ?2",
+        )?;
 
-        let mut deck_deltas: HashMap<i64, (i64, i64)> = HashMap::new(); // deck_id -> (questions_total_delta, questions_correct_delta)
+        let cards = stmt
+            .query_map(params![deck_id, limit as i64], |row| {
+                let card = Card {
+                    id: Some(row.get(0)?),
+                    term: row.get(1)?,
+                    definition: row.get(2)?,
+                };
+                let score: i64 = row.get(3)?;
+                Ok((card, score))
+            })?
+            .filter_map(Result::ok)
+            .collect();
 
-        for (card_id, corrects, incorrects, sm2) in updates {
-            let score_delta = CORRECT_ANSWER_SCORE * corrects - INCORRECT_ANSWER_SCORE * incorrects;
-            if let Some(s) = sm2 {
-                let next_due = now + s.interval * 86400;
-                tx.execute(
-                    "UPDATE card_stats
-                 SET learning_score = learning_score + ?1,
-                     correct_count = correct_count + ?2,
-                     incorrect_count = incorrect_count + ?3,
-                     last_answered_at = ?4,
-                     interval = ?5,
-                     repetitions = ?6,
-                     easiness_factor = ?7,
-                     next_due = ?8
-                 WHERE card_id = ?9",
-                    params![
-                        score_delta,
-                        corrects,
-                        incorrects,
-                        now,
-                        s.interval,
-                        s.repetitions,
-                        s.easiness_factor,
-                        next_due,
-                        card_id
-                    ],
-                )
-                .with_context(|| format!("Failed to update card_stats for card_id {}.", card_id))?;
-            } else {
-                tx.execute(
-                    "UPDATE card_stats
-                 SET learning_score = learning_score + ?1,
-                     correct_count = correct_count + ?2,
-                     incorrect_count = incorrect_count + ?3,
-                     last_answered_at = ?4
-                 WHERE card_id = ?5",
-                    params![score_delta, corrects, incorrects, now, card_id],
-                )
-                .with_context(|| format!("Failed to update card_stats for card_id {}.", card_id))?;
-            }
-
-            let deck_id: i64 = tx
-                .query_row(
-                    "SELECT deck_id FROM cards WHERE id = ?1",
-                    params![card_id],
-                    |r| r.get(0),
-                )
-                .with_context(|| format!("Failed to lookup deck_id for card_id {}.", card_id))?;
-
-            let entry = deck_deltas.entry(deck_id).or_insert((0, 0));
-            entry.0 += corrects + incorrects;
-            entry.1 += *corrects;
-        }
-
-        for (deck_id, (q_delta, correct_delta)) in deck_deltas {
-            tx.execute(
-                "UPDATE deck_stats
-                 SET questions_answered_total = questions_answered_total + ?1,
-                     questions_correct_total = questions_correct_total + ?2,
-                     last_studied_at = ?3
-                 WHERE deck_id = ?4",
-                params![q_delta, correct_delta, now, deck_id],
-            )
-            .with_context(|| format!("Failed to update deck_stats for deck_id {}.", deck_id))?;
-        }
-
-        tx.commit().context("Failed to commit batch transaction.")?;
-        Ok(())
+        Ok(cards)
     }
+
+    /// Learn mode (FSRS): Fetch cards for a deck alongside their current FSRSStats.
+    /// Orders by cards that are due first (next_due <= now or last_review == 0), then by oldest next_due.
+    pub fn get_cards_with_fsrs_for_deck(
+        &self,
+        deck_id: i64,
+    ) -> anyhow::Result<Vec<(Card, FSRSStats)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT c.id, c.term, c.definition,
+                    COALESCE(s.stability, 0.0),
+                    COALESCE(s.difficulty, 0.0),
+                    COALESCE(s.repetition_count, 0),
+                    COALESCE(s.last_review, 0),
+                    COALESCE(s.next_due, 0),
+                    COALESCE(s.lapses, 0),
+                    COALESCE(s.state, 0)
+             FROM cards c
+             LEFT JOIN card_stats s ON c.id = s.card_id
+             WHERE c.deck_id = ?1
+             ORDER BY
+                CASE WHEN COALESCE(s.last_review, 0) == 0 THEN 0
+                     WHEN COALESCE(s.next_due, 0) <= strftime('%s','now') THEN 1
+                     ELSE 2 END ASC,
+                COALESCE(s.next_due, 0) ASC,
+                c.id ASC",
+        )?;
+
+        let rows = stmt.query_map(params![deck_id], |row| {
+            let card = Card {
+                id: Some(row.get(0)?),
+                term: row.get(1)?,
+                definition: row.get(2)?,
+            };
+            let fsrs = FSRSStats {
+                stability: row.get(3)?,
+                difficulty: row.get(4)?,
+                repetition_count: row.get(5)?,
+                last_review: row.get(6)?,
+                next_due: row.get(7)?,
+                lapses: row.get(8)?,
+                state: row.get(9)?,
+            };
+            Ok((card, fsrs))
+        })?;
+
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.context("Failed mapping card FSRS row.")?);
+        }
+        Ok(out)
+    }
+
+    /// Dashboard query: Returns summary stats for all saved decks including total cards,
+    /// due cards, new cards, last studied timestamp, and earliest next due timestamp.
+    pub fn get_deck_dashboard_items(&self) -> anyhow::Result<Vec<DeckDashboardItem>> {
+        let now = now_secs();
+        let mut stmt = self.conn.prepare(
+            "SELECT d.id, d.name,
+                    COUNT(c.id) AS total_cards,
+                    SUM(CASE WHEN c.id IS NOT NULL AND (s.last_review IS NULL OR s.last_review = 0 OR s.next_due <= ?1) THEN 1 ELSE 0 END) AS due_cards,
+                    SUM(CASE WHEN c.id IS NOT NULL AND (s.repetition_count IS NULL OR s.repetition_count = 0) THEN 1 ELSE 0 END) AS new_cards,
+                    ds.last_studied_at,
+                    MIN(CASE WHEN c.id IS NOT NULL AND s.last_review > 0 AND s.next_due > ?1 THEN s.next_due ELSE NULL END) AS next_due_at
+             FROM decks d
+             LEFT JOIN cards c ON d.id = c.deck_id
+             LEFT JOIN card_stats s ON c.id = s.card_id
+             LEFT JOIN deck_stats ds ON d.id = ds.deck_id
+             GROUP BY d.id
+             ORDER BY due_cards DESC, d.name ASC",
+        )?;
+
+        let rows = stmt.query_map(params![now], |row| {
+            Ok(DeckDashboardItem {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                total_cards: row.get(2)?,
+                due_cards: row.get(3)?,
+                new_cards: row.get(4)?,
+                last_studied_at: row.get(5)?,
+                next_due_at: row.get(6)?,
+            })
+        })?;
+
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.context("Failed mapping deck dashboard item.")?);
+        }
+        Ok(out)
+    }
+
+    // ========================== Confusions ==========================
 
     /// Update a confusion count for (card_id, mistaken_with) by adding delta.
     /// If new score <= 0, remove the confusion row.
@@ -706,7 +839,14 @@ impl Storage {
     ///      - If new_count > 0 => UPDATE count = new_count
     ///      - If new_count <= 0 => DELETE row
     ///  - If no row exists and delta > 0 => INSERT new row with count = delta
-    pub fn adjust_confusion(&mut self, card_id: i64, mistaken_with: i64, delta: i64) -> Result<()> {
+    pub fn adjust_confusion(&mut self, id_a: i64, id_b: i64, delta: i64) -> Result<()> {
+        // enforce ordering so we have only have one undirected edge
+        let (card_id, mistaken_with) = if id_a < id_b {
+            (id_a, id_b)
+        } else {
+            (id_b, id_a)
+        };
+
         let tx = self
             .conn
             .transaction()
@@ -766,19 +906,22 @@ impl Storage {
         Ok(())
     }
 
-    /// Return recorded confusions for a card: Vec<(mistaken_card_id, count)> ordered by count desc.
-    pub fn get_confusions(&self, card_id: i64) -> Result<Vec<(i64, i64)>> {
-        let mut stmt = self.conn.prepare(
-                "SELECT mistaken_card_id, count FROM card_confusions WHERE card_id = ?1 ORDER BY count DESC",
-            ).context("Failed to prepare get_confusions.")?;
-        let rows = stmt
-            .query_map(params![card_id], |r| Ok((r.get(0)?, r.get(1)?)))
-            .context("Failed to query confusions.")?;
-        let mut out = Vec::new();
-        for r in rows {
-            out.push(r.context("Failed to map confusion row.")?);
-        }
-        Ok(out)
+    /// Fetches bi-directional confusions for a given card for faster accurate distractors.
+    pub fn get_bidirectional_confusions(&self, card_id: i64) -> anyhow::Result<Vec<(i64, i64)>> {
+        Ok(self
+            .conn
+            .prepare(
+                "SELECT mistaken_card_id, count
+                FROM card_confusions
+                WHERE card_id = ?1
+                UNION ALL
+                SELECT card_id, count
+                FROM card_confusions
+                WHERE mistaken_card_id = ?1",
+            )?
+            .query_map([card_id], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .filter_map(Result::ok)
+            .collect())
     }
 
     /// Get current learning_score for a card (reads card_stats.learning_score).
@@ -792,24 +935,6 @@ impl Storage {
             )
             .with_context(|| format!("Failed to get learning_score for card {}.", card_id))?;
         Ok(score)
-    }
-
-    /// Get current SM-2 stats for a card.
-    pub fn _get_card_sm2_stats(&self, card_id: i64) -> Result<crate::core::learn::SM2Stats> {
-        use crate::core::learn::SM2Stats;
-        self.conn
-            .query_row(
-                "SELECT interval, repetitions, easiness_factor FROM card_stats WHERE card_id = ?1",
-                params![card_id],
-                |r| {
-                    Ok(SM2Stats {
-                        interval: r.get(0)?,
-                        repetitions: r.get(1)?,
-                        easiness_factor: r.get(2)?,
-                    })
-                },
-            )
-            .with_context(|| format!("Failed to get SM2 stats for card {}.", card_id))
     }
 
     /// Get cards in the positive learning set for a deck (learning_score > 0)
@@ -840,6 +965,8 @@ impl Storage {
         }
         Ok(out)
     }
+
+    // ======================== User Profile ========================
 
     /// Update persistent currency in user_profile (positive or negative delta)
     pub fn update_currency(&mut self, delta: i64) -> Result<()> {
@@ -892,16 +1019,18 @@ impl Storage {
             .context("Failed to count cards in deck.")
     }
 
-    /// Summarize stats for a deck: New (0 reps), Learning (1-6 interval), Mature (>=7 interval).
+    // ======================== Stats Reads (cont) =================
+
+    /// Summarize stats for a deck under FSRS: New (0 reps), Learning (reps > 0, stability < 7d), Mature (stability >= 7d).
     pub fn get_deck_stats_summary(&self, deck_id: i64) -> Result<DeckStatsSummary> {
         self.conn
             .query_row(
                 "SELECT
                     COUNT(*),
-                    SUM(CASE WHEN s.repetitions = 0 THEN 1 ELSE 0 END),
-                    SUM(CASE WHEN s.repetitions > 0 AND s.interval < 7 THEN 1 ELSE 0 END),
-                    SUM(CASE WHEN s.interval >= 7 THEN 1 ELSE 0 END),
-                    AVG(s.easiness_factor)
+                    SUM(CASE WHEN s.repetition_count = 0 THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN s.repetition_count > 0 AND s.stability < 7.0 THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN s.repetition_count > 0 AND s.stability >= 7.0 THEN 1 ELSE 0 END),
+                    AVG(s.stability)
                  FROM cards c
                  JOIN card_stats s ON c.id = s.card_id
                  WHERE c.deck_id = ?1",
@@ -912,7 +1041,7 @@ impl Storage {
                         new_count: r.get::<_, Option<i64>>(1)?.unwrap_or(0),
                         learning_count: r.get::<_, Option<i64>>(2)?.unwrap_or(0),
                         mature_count: r.get::<_, Option<i64>>(3)?.unwrap_or(0),
-                        average_easiness: r.get::<_, Option<f64>>(4)?.unwrap_or(2.5),
+                        average_easiness: r.get::<_, Option<f64>>(4)?.unwrap_or(0.0),
                     })
                 },
             )
@@ -929,7 +1058,7 @@ impl Storage {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT c.id, c.term, c.definition, s.learning_score, s.interval, s.easiness_factor, s.next_due
+                "SELECT c.id, c.term, c.definition, s.learning_score, s.stability, s.difficulty, s.repetition_count, s.last_review, s.next_due, s.lapses, s.state, s.correct_count, s.incorrect_count
                  FROM cards c
                  JOIN card_stats s ON c.id = s.card_id
                  WHERE c.deck_id = ?1
@@ -945,9 +1074,17 @@ impl Storage {
                     term: r.get(1)?,
                     definition: r.get(2)?,
                     learning_score: r.get(3)?,
-                    interval: r.get(4)?,
-                    easiness: r.get(5)?,
-                    next_due: r.get(6)?,
+                    fsrs: Some(FSRSStats {
+                        stability: r.get(4)?,
+                        difficulty: r.get(5)?,
+                        repetition_count: r.get(6)?,
+                        last_review: r.get(7)?,
+                        next_due: r.get(8)?,
+                        lapses: r.get(9)?,
+                        state: r.get(10)?,
+                    }),
+                    correct_count: r.get(11)?,
+                    incorrect_count: r.get(12)?,
                 })
             })
             .context("Failed to query paginated cards.")?;
@@ -1015,82 +1152,62 @@ impl Storage {
         }
         Ok(())
     }
+    // ==================== Failed Session Files ====================
+
+    /// Find unsaved session files written by fallback logic.
+    /// They live next to the DB file and match `quizzy_failed_session_*.log`.
+    pub fn failed_session_files(&self) -> Result<Vec<std::path::PathBuf>> {
+        let mut dir = db_path_from_env_or_default();
+        if let Some(parent) = dir.parent() {
+            dir = parent.to_path_buf();
+        } else {
+            dir = std::path::PathBuf::from(".");
+        }
+        let mut out = Vec::new();
+        for entry in
+            std::fs::read_dir(&dir).context("Failed to read DB directory for failed sessions.")?
+        {
+            let entry = entry.context("Failed to read directory entry.")?;
+            let p = entry.path();
+            if let Some(name) = p.file_name().and_then(|n| n.to_str())
+                && name.starts_with("quizzy_failed_session_")
+                && name.ends_with(".log")
+            {
+                out.push(p);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Remove a failed session file after replay or if user discards it.
+    pub fn remove_failed_session_file(&self, path: &Path) -> Result<()> {
+        std::fs::remove_file(path)
+            .with_context(|| format!("Failed to remove failed session file {}.", path.display()))?;
+        Ok(())
+    }
 }
 
-/// Initialize the database connection: pragmas and schema
+// ========================= Free Functions ==========================
+
+/// Initialize the database connection: apply base schema, then run migrations.
 pub fn init_db(conn: &Connection) -> Result<()> {
     conn.pragma_update(None, "foreign_keys", "ON")
-        .context("failed to enable foreign_keys")?;
+        .context("Failed to enable foreign_keys")?;
     let _ = conn.pragma_update(None, "journal_mode", "WAL");
 
+    // Apply the base schema (CREATE TABLE IF NOT EXISTS — safe on existing DBs).
     conn.execute_batch(SCHEMA)
         .context("Failed to execute schema SQL")?;
 
+    // Ensure the user_profile singleton row exists.
     conn.execute(
         "INSERT OR IGNORE INTO user_profile (id, currency) VALUES (1, 0);",
         [],
     )
     .context("Failed to ensure user_profile row.")?;
 
-    // migration for adding 'streak' column because I'm stupid
-    let has_streak: Option<String> = conn
-        .query_row(
-            "SELECT name FROM pragma_table_info('user_profile') WHERE name = 'streak'",
-            [],
-            |r| r.get(0),
-        )
-        .optional()
-        .context("Failed to check for streak column in user_profile.")?;
-
-    if has_streak.is_none() {
-        conn.execute(
-            "ALTER TABLE user_profile ADD COLUMN streak INTEGER NOT NULL DEFAULT 0",
-            [],
-        )
-        .context("Failed to add streak column to user_profile.")?;
-    }
-
-    // migration for SM-2 columns in card_stats
-    let sm2_cols = ["interval", "repetitions", "easiness_factor", "next_due"];
-    for col in sm2_cols {
-        let has_col: Option<String> = conn
-            .query_row(
-                &format!(
-                    "SELECT name FROM pragma_table_info('card_stats') WHERE name = '{}'",
-                    col
-                ),
-                [],
-                |r| r.get(0),
-            )
-            .optional()
-            .context("Failed to check for column in card_stats.")?;
-
-        if has_col.is_none() {
-            let sql = match col {
-                "interval" => {
-                    "ALTER TABLE card_stats ADD COLUMN interval INTEGER NOT NULL DEFAULT 0"
-                }
-                "repetitions" => {
-                    "ALTER TABLE card_stats ADD COLUMN repetitions INTEGER NOT NULL DEFAULT 0"
-                }
-                "easiness_factor" => {
-                    "ALTER TABLE card_stats ADD COLUMN easiness_factor REAL NOT NULL DEFAULT 2.5"
-                }
-                "next_due" => {
-                    "ALTER TABLE card_stats ADD COLUMN next_due INTEGER NOT NULL DEFAULT 0"
-                }
-                _ => continue,
-            };
-            conn.execute(sql, [])
-                .with_context(|| format!("Failed to add {} column to card_stats.", col))?;
-        }
-    }
-
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_card_stats_next_due ON card_stats(next_due);",
-        [],
-    )
-    .context("Failed to create index idx_card_stats_next_due")?;
+    // Apply any pending versioned migrations.
+    run_migrations(conn).context("Failed to run schema migrations.")?;
 
     Ok(())
 }
@@ -1109,6 +1226,144 @@ pub fn get_deck(src: DeckSource, storage: &Storage) -> anyhow::Result<Deck> {
                     .context("Failed to get deck by name.")
             }
         }
-        DeckSource::File(p) => read_deck_from_file(p),
+        DeckSource::File(p) => read_deck_from_file(&p),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    #[test]
+    fn test_init_db_and_fsrs_session_commit() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+
+        let storage = Storage { conn };
+
+        let deck_id: i64 = storage
+            .conn
+            .query_row(
+                "INSERT INTO decks (name) VALUES ('Test Deck') RETURNING id",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+
+        let card_id: i64 = storage
+            .conn
+            .query_row(
+                "INSERT INTO cards (deck_id, term, definition) VALUES (?1, 'Hola', 'Hello') RETURNING id",
+                params![deck_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+
+        let fsrs = FSRSStats {
+            stability: 2.5,
+            difficulty: 4.1,
+            repetition_count: 1,
+            last_review: 100000,
+            next_due: 186400,
+            lapses: 0,
+            state: 2,
+        };
+
+        storage
+            .commit_learn_session(&[(card_id, fsrs, 1, 0, 1)])
+            .unwrap();
+
+        let cards_with_fsrs = storage.get_cards_with_fsrs_for_deck(deck_id).unwrap();
+        assert_eq!(cards_with_fsrs.len(), 1);
+        let (c, read_fsrs) = &cards_with_fsrs[0];
+        assert_eq!(c.term, "Hola");
+        assert_eq!(read_fsrs.stability, 2.5);
+        assert_eq!(read_fsrs.difficulty, 4.1);
+        assert_eq!(read_fsrs.repetition_count, 1);
+        assert_eq!(read_fsrs.lapses, 0);
+        assert_eq!(read_fsrs.state, 2);
+
+        let dashboard = storage.get_deck_dashboard_items().unwrap();
+        assert_eq!(dashboard.len(), 1);
+        assert_eq!(dashboard[0].name, "Test Deck");
+        assert_eq!(dashboard[0].total_cards, 1);
+
+        let stats_summary = storage.get_deck_stats_summary(deck_id).unwrap();
+        assert_eq!(stats_summary.total_cards, 1);
+        assert_eq!(stats_summary.new_count, 0);
+        assert_eq!(stats_summary.learning_count, 1);
+        assert_eq!(stats_summary.mature_count, 0);
+        assert!((stats_summary.average_easiness - 2.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_find_deck_by_name_and_weakest_cards_and_dashboard_zero_due() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+
+        let storage = Storage { conn };
+
+        // Test find_deck_by_name returns None when deck does not exist
+        assert!(storage.find_deck_by_name("NonExistent").unwrap().is_none());
+        assert!(storage.get_deck_by_name("NonExistent").is_err());
+
+        // Create deck
+        let deck_id: i64 = storage
+            .conn
+            .query_row(
+                "INSERT INTO decks (name) VALUES ('French') RETURNING id",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+
+        let card_id: i64 = storage
+            .conn
+            .query_row(
+                "INSERT INTO cards (deck_id, term, definition) VALUES (?1, 'Bonjour', 'Hello') RETURNING id",
+                params![deck_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+
+        // Test find_deck_by_name returns Some(Deck)
+        let found = storage
+            .find_deck_by_name("French")
+            .unwrap()
+            .expect("Deck should be found");
+        assert_eq!(found.id, Some(deck_id));
+        assert_eq!(found.name, "French");
+        assert_eq!(found.cards.len(), 1);
+
+        // Test get_weakest_cards when card_stats has no row for card (COALESCE integer)
+        let weakest = storage.get_weakest_cards(deck_id, 10).unwrap();
+        assert_eq!(weakest.len(), 1);
+        assert_eq!(weakest[0].0.term, "Bonjour");
+        assert_eq!(weakest[0].1, 0); // score should be 0 (integer)
+
+        // Commit review with next_due far in the future
+        let future_due = now_secs() + 100000;
+        let fsrs = FSRSStats {
+            stability: 5.0,
+            difficulty: 3.0,
+            repetition_count: 2,
+            last_review: now_secs(),
+            next_due: future_due,
+            lapses: 0,
+            state: 2,
+        };
+        storage
+            .commit_learn_session(&[(card_id, fsrs, 1, 0, 1)])
+            .unwrap();
+
+        // Dashboard should return this deck even when due_cards == 0
+        let dashboard = storage.get_deck_dashboard_items().unwrap();
+        assert_eq!(dashboard.len(), 1);
+        assert_eq!(dashboard[0].name, "French");
+        assert_eq!(dashboard[0].total_cards, 1);
+        assert_eq!(dashboard[0].due_cards, 0);
+        assert_eq!(dashboard[0].new_cards, 0);
+        assert_eq!(dashboard[0].next_due_at, Some(future_due));
     }
 }

@@ -32,7 +32,7 @@ fn generate_confusions(cards: &mut [Card], rng: &mut ThreadRng) -> Vec<(i64, i64
 // measure the time to generate choices for each card once
 fn bench_mc_all_cards_no_confusions(c: &mut Criterion) {
     // adjust the relative path to your econ.txt location in the repo
-    let deck = read_deck_from_file(PathBuf::from("econ.txt")).expect("Failed to get deck.");
+    let deck = read_deck_from_file(&PathBuf::from("econ.txt")).expect("Failed to get deck.");
     let cards = deck.cards;
     let mut rng = thread_rng();
 
@@ -52,7 +52,7 @@ fn bench_mc_all_cards_no_confusions(c: &mut Criterion) {
 
 // measure the time to generate choices for each card once
 fn bench_mc_all_cards(c: &mut Criterion) {
-    let deck = read_deck_from_file(PathBuf::from("econ.txt")).expect("Failed to get deck.");
+    let deck = read_deck_from_file(&PathBuf::from("econ.txt")).expect("Failed to get deck.");
     let mut cards = deck.cards.clone();
     let mut rng = thread_rng();
     let confusions = generate_confusions(&mut cards, &mut rng);
@@ -77,7 +77,7 @@ fn bench_mc_all_cards(c: &mut Criterion) {
 
 // as an example, measure time for a single random card
 fn bench_mc_single_card_no_confusions(c: &mut Criterion) {
-    let deck = read_deck_from_file(PathBuf::from("econ.txt")).expect("Failed to get deck.");
+    let deck = read_deck_from_file(&PathBuf::from("econ.txt")).expect("Failed to get deck.");
     let mut rng = thread_rng();
     let mut cards = deck.cards;
     cards.shuffle(&mut rng);
@@ -94,7 +94,7 @@ fn bench_mc_single_card_no_confusions(c: &mut Criterion) {
 
 // as an example, measure time for a single random card
 fn bench_mc_single_card(c: &mut Criterion) {
-    let deck = read_deck_from_file(PathBuf::from("econ.txt")).expect("Failed to get deck.");
+    let deck = read_deck_from_file(&PathBuf::from("econ.txt")).expect("Failed to get deck.");
     let mut rng = thread_rng();
     let mut cards = deck.cards.clone();
     let mut cards2 = cards.clone();

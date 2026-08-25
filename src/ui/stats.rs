@@ -160,12 +160,12 @@ pub fn stats_mode(
                     vec![label.to_string(), count.to_string(), format!("{:.1}%", pct)]
                 };
 
-                table.add_row(row("Mature (Interval >= 7d)", summary.mature_count));
+                table.add_row(row("Mature (Stability >= 7d)", summary.mature_count));
                 table.add_row(row("Learning", summary.learning_count));
                 table.add_row(row("New", summary.new_count));
 
                 println!("\n--- Deck: {} ---\n{}", deck_name, table);
-                println!("Average Easiness: {:.2}", summary.average_easiness);
+                println!("Average Stability: {:.2} days", summary.average_easiness);
 
                 if !leeches.is_empty() {
                     println!("\nTop Leech Cards (Most Missed):");
@@ -214,27 +214,27 @@ pub fn stats_mode(
                         "Term",
                         "Definition",
                         "Score",
-                        "Interval",
-                        "EF",
+                        "Stability",
+                        "Difficulty",
                         "Next Due",
                     ]);
 
                 for c in cards {
-                    let due_str = if c.next_due == 0 {
-                        "Now".to_string()
-                    } else {
-                        Utc.timestamp_opt(c.next_due, 0)
-                            .unwrap()
-                            .format("%Y-%m-%d")
-                            .to_string()
+                    let due_str = match c.fsrs {
+                        Some(stats) if stats.next_due > 0 => Utc
+                            .timestamp_opt(stats.next_due, 0)
+                            .single()
+                            .map(|dt| dt.format("%Y-%m-%d").to_string())
+                            .unwrap_or_else(|| "New".to_string()),
+                        _ => "New".to_string(),
                     };
 
                     table.add_row(vec![
                         truncate(&c.term, 20),
                         truncate(&c.definition, 30),
                         c.learning_score.to_string(),
-                        format!("{}d", c.interval),
-                        format!("{:.2}", c.easiness),
+                        format!("{:.1}d", c.fsrs.map_or(0.0, |s| s.stability)),
+                        format!("{:.2}", c.fsrs.map_or(0.0, |s| s.difficulty)),
                         due_str,
                     ]);
                 }

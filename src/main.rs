@@ -3,14 +3,14 @@ use std::path::PathBuf;
 mod core;
 mod mcp;
 mod ui;
-use crate::core::deck::{Deck, DeckSource, resolve_deck_source, write_deck_to_file};
-use crate::core::learn::commit_session_with_retries;
+use crate::core::deck::{Deck, DeckSource, resolve_deck_source};
+use crate::core::learn::{commit_payload_with_retries, read_failed_session_file};
 use crate::core::storage::{Storage, get_deck};
 use crate::core::string_distance::string_distance;
-use crate::ui::cards::cards_mode;
+use crate::ui::cards::{cards_mode, cram_mode};
 use crate::ui::gamble::gauntlet_mode;
 use crate::ui::import::import_from_quizlet;
-use crate::ui::learn::learn_mode;
+use crate::ui::learn::{learn_dashboard, learn_mode, test_mode};
 use crate::ui::stats::stats_mode;
 use chrono::Utc;
 use std::io::{Write, stdin, stdout};
@@ -37,16 +37,32 @@ pub enum Command {
     /// Imports a deck from a Quizlet URL or JSON file from the API. If a name is provided, it will be used for the deck; otherwise, you will be prompted to provide one.
     Import {
         name: Option<String>,
-        // using url requires browser available, json can be used directly
+        /// Using a url requires browser available, json can be used directly
         url_or_json: Option<String>,
+    },
+    /// Imports decks from all files in a given directory.
+    ImportAll {
+        /// Directory to import deck files from
+        dir: PathBuf,
+        /// Overwrite existing decks with the same name
+        #[arg(long)]
+        overwrite: bool,
     },
     /// Writes a deck (by name, deck id, or file path) to a file in the current directory.
     ///
-    /// Writes a deck (by name, deck id, or file path) to a file in the current directory. The file type is determined by the extension you provide (e.g. csv, tsv, json). If the file already exists, it will be overwritten.
+    /// Writes a deck (by name, deck id, or file path) to a file. If the file already exists, it will be overwritten. If no path is provided, it will attempt to write to the deck's original source path.
     Export {
         deck: String,
         /// Destination file path (e.g. deck.csv, output.json)
-        file_path: PathBuf,
+        file_path: Option<PathBuf>,
+    },
+    /// Exports all saved decks into a given directory.
+    ExportAll {
+        /// Directory to import deck files from
+        dir: PathBuf,
+        /// Only export decks with no source path (created in Quizzy, not imported from a file)
+        #[arg(long)]
+        unsourced_only: bool,
     },
     /// Adds a new card to a saved deck (name or deck id).
     Add {
@@ -102,15 +118,28 @@ pub enum Command {
         #[arg(short, long)]
         verbose: bool,
     },
-    /// Starts a learning session with a deck, asking questions in various formats.
-    ///
-    /// Starts a learning session with a deck, asking questions in various formats. By default, it will ask a mix of term and definition questions, prioritizing written questions over multiple choice. Use the flags to customize the question types and quantity. Performance stats will be saved after the session unless --nostats is used.
+    /// Spaced-repetition (FSRS) practice by hybrid active recall with typed answers.
     Learn {
+        /// Name of the deck to learn (optional; if omitted, shows the interactive dashboard)
+        deck: Option<String>,
+
+        /// Ask about terms only (priority)
+        #[arg(short, long)]
+        terms: bool,
+
+        /// Ask about definitions only
+        #[arg(short, long)]
+        definitions: bool,
+    },
+    /// Begins a multiple-choice/written answer test that does not affect memorization stats.
+    ///
+    /// Multiple-choice/written answer test. By default, it will ask a mix of term and definition questions, prioritizing written questions over multiple choice. Use the flags to customize the question types and quantity.
+    Test {
         deck: String,
 
-        /// Don't save performance stats
+        /// Instant feedback after every question
         #[arg(short, long)]
-        nostats: bool,
+        feedback: bool,
 
         /// Ask about terms only (priority)
         #[arg(short, long)]
@@ -134,12 +163,17 @@ pub enum Command {
     },
     /// Review cards in a deck without quizzing, optionally shuffling the order.
     Cards {
-        deck: String,
+        /// Name of the deck to review (optional; if omitted, prompts deck selection)
+        deck: Option<String>,
 
         /// Shuffle cards before studying
         #[arg(short, long)]
         shuffle: bool,
     },
+    /// "Cram" study mode for memorizing in less than a week: flash cards and simple self-grading
+    Study { saved_deck: Option<String> },
+    /// "Cram" study mode for memorizing in less than a week: flash cards and simple self-grading
+    Cram { saved_deck: Option<String> },
     /// A more intense learning mode that will have you on your toes!
     Gauntlet { deck: String },
     /// Currently an alias for Gauntlet mode, but may soon have a separate style of game.
@@ -191,29 +225,22 @@ fn startup(storage: &mut Storage) -> anyhow::Result<()> {
             if choice == "y" || choice == "yes" {
                 for p in files {
                     println!("Attempting to save {}", p.display());
-                    match storage.read_failed_session_file(&p) {
-                        Ok(updates) => {
-                            // commit_session_with_retries is in ui::learn and should be public
-                            match commit_session_with_retries(storage, &updates, 3) {
-                                Ok(()) => {
-                                    println!(
-                                        "Saved session {} successfully; removing file.",
-                                        p.display()
-                                    );
-                                    if let Err(e) = storage.remove_failed_session_file(&p) {
-                                        eprintln!(
-                                            "Warning: failed to remove {}: {}",
-                                            p.display(),
-                                            e
-                                        );
-                                    }
-                                }
-                                Err(e) => {
-                                    eprintln!("Failed to save session {}: {}", p.display(), e);
-                                    eprintln!("File has been preserved; you can retry later.");
+                    match read_failed_session_file(&p) {
+                        Ok(payload) => match commit_payload_with_retries(storage, &payload, 3) {
+                            Ok(()) => {
+                                println!(
+                                    "Saved session {} successfully; removing file.",
+                                    p.display()
+                                );
+                                if let Err(e) = storage.remove_failed_session_file(&p) {
+                                    eprintln!("Warning: failed to remove {}: {}", p.display(), e);
                                 }
                             }
-                        }
+                            Err(e) => {
+                                eprintln!("Failed to save session {}: {}", p.display(), e);
+                                eprintln!("File has been preserved; you can retry later.");
+                            }
+                        },
                         Err(e) => {
                             eprintln!("Failed to parse session file {}: {}", p.display(), e);
                             eprintln!("Skipping this file. You can inspect or delete it manually.");
@@ -249,17 +276,14 @@ fn main() -> anyhow::Result<()> {
         Command::Import { name, url_or_json } => {
             import_from_quizlet(name, url_or_json, &mut storage)
         }
-        Command::Export { deck, file_path } => {
-            let deck = get_deck(resolve_deck_source(deck.as_str()), &storage)?;
-            println!(
-                "Exporting deck '{}' to {}...",
-                deck.name,
-                file_path.display()
-            );
-            write_deck_to_file(&deck, file_path)?;
-            println!("Successfully exported deck.");
-            Ok(())
+        Command::ImportAll { dir, overwrite } => {
+            ui::general::import_all(&mut storage, dir, overwrite)
         }
+        Command::Export { deck, file_path } => ui::general::export(&mut storage, deck, file_path),
+        Command::ExportAll {
+            dir,
+            unsourced_only,
+        } => ui::general::export_all(&mut storage, dir, unsourced_only),
         Command::Add {
             deck,
             term,
@@ -285,7 +309,23 @@ fn main() -> anyhow::Result<()> {
         } => ui::general::list(&mut storage, deck, search, verbose),
         Command::Learn {
             deck,
-            nostats,
+            terms,
+            definitions,
+        } => {
+            if let Some(deck_name) = deck {
+                let deck = get_deck(resolve_deck_source(deck_name.as_str()), &storage)?;
+                storage.update_user_last_active()?;
+                if let Some(id) = deck.id {
+                    storage.update_deck_last_studied(id)?;
+                }
+                learn_mode(deck, terms, definitions, &mut storage)
+            } else {
+                learn_dashboard(&mut storage)
+            }
+        }
+        Command::Test {
+            deck,
+            feedback,
             terms,
             definitions,
             written,
@@ -297,9 +337,9 @@ fn main() -> anyhow::Result<()> {
             if let Some(id) = deck.id {
                 storage.update_deck_last_studied(id)?;
             }
-            learn_mode(
+            test_mode(
                 deck,
-                nostats,
+                feedback,
                 terms,
                 definitions,
                 written,
@@ -309,22 +349,32 @@ fn main() -> anyhow::Result<()> {
             )
         }
         Command::Cards { deck, shuffle } => {
-            let deck = get_deck(resolve_deck_source(deck.as_str()), &storage)?;
-            storage.update_user_last_active()?;
-            if let Some(id) = deck.id {
-                storage.update_deck_last_studied(id)?;
-            }
-            cards_mode(deck, shuffle)
+            let deck = if let Some(deck_name) = deck {
+                let deck = get_deck(resolve_deck_source(deck_name.as_str()), &storage)?;
+                storage.update_user_last_active()?;
+                if let Some(id) = deck.id {
+                    storage.update_deck_last_studied(id)?;
+                }
+                Some(deck)
+            } else {
+                None
+            };
+            cards_mode(deck, shuffle, &mut storage)
         }
-        Command::Gamble { deck } => {
-            let deck = get_deck(resolve_deck_source(deck.as_str()), &storage)?;
-            storage.update_user_last_active()?;
-            if let Some(id) = deck.id {
-                storage.update_deck_last_studied(id)?;
-            }
-            gauntlet_mode(deck, &mut storage)
+        Command::Study { saved_deck } | Command::Cram { saved_deck } => {
+            let deck = if let Some(deck_name) = saved_deck {
+                let deck = get_deck(resolve_deck_source(deck_name.as_str()), &storage)?;
+                storage.update_user_last_active()?;
+                if let Some(id) = deck.id {
+                    storage.update_deck_last_studied(id)?;
+                }
+                Some(deck)
+            } else {
+                None
+            };
+            cram_mode(deck, &mut storage)
         }
-        Command::Gauntlet { deck } => {
+        Command::Gamble { deck } | Command::Gauntlet { deck } => {
             let deck = get_deck(resolve_deck_source(deck.as_str()), &storage)?;
             storage.update_user_last_active()?;
             if let Some(id) = deck.id {
@@ -350,5 +400,10 @@ fn main() -> anyhow::Result<()> {
             stats_mode(deck_option, size, page, &mut storage)
         }
         Command::MCP {} => mcp::server::launch(storage),
+        #[allow(unreachable_patterns)]
+        _ => {
+            println!("Unimplemented command");
+            Ok(())
+        }
     }
 }

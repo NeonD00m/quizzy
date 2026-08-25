@@ -2,21 +2,96 @@
   {
     "text": "publish to crates.io as binary",
     "completed": false,
-    "tags": []
+    "tags": [],
+    "files": []
   },
   {
     "text": "see if MCP is a better way to go",
     "completed": true,
-    "tags": []
+    "tags": [],
+    "files": []
   },
   {
     "text": "let cli users reference decks by id if they type a number in",
-    "completed": false,
-    "tags": []
+    "completed": true,
+    "tags": [],
+    "files": []
   },
   {
     "text": "edit card command",
+    "completed": true,
+    "tags": [],
+    "files": []
+  },
+  {
+    "text": "version database so that we can tell when to delete it",
+    "completed": true,
+    "tags": [],
+    "files": []
+  },
+  {
+    "text": "make confusions go both ways",
+    "completed": true,
+    "tags": [],
+    "files": []
+  },
+  {
+    "text": "FSRS?",
+    "completed": true,
+    "tags": [],
+    "files": []
+  },
+  {
+    "text": "separate quiz mode to use mcq with confusions",
+    "completed": true,
+    "tags": [
+      "+2/-1"
+    ],
+    "files": []
+  },
+  {
+    "text": "cram study mode using simple score with flashcard mode: flip, grade, next, repeat",
+    "completed": true,
+    "tags": [
+      "+1/-1"
+    ],
+    "files": []
+  },
+  {
+    "text": "learn mode with FSRS, prompt self-grade if typed answer close but outside threshold",
+    "completed": true,
+    "tags": [
+      "+2/-3"
+    ],
+    "files": []
+  },
+  {
+    "text": "if learn mode is initiated without a deck, then show a dashboard of decks to study with how many cards",
+    "completed": true,
+    "tags": [],
+    "files": []
+  },
+  {
+    "text": "make sure new study methods are safe to commit to storage immediately in case of crash",
+    "completed": true,
+    "tags": [],
+    "files": []
+  },
+  {
+    "text": "make tutorials for hosting the mcp server for different agentic applications",
     "completed": false,
-    "tags": []
+    "tags": [],
+    "files": []
+  },
+  {
+    "text": "check if they typed answer fast enough and mark as Easy if it is",
+    "completed": true,
+    "tags": [
+      "code-todo"
+    ],
+    "files": [
+      "src\\ui\\learn.rs",
+      "grade_response_time.py"
+    ]
   }
 ]

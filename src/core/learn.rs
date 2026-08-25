@@ -1,69 +1,39 @@
 use crate::core::deck::*;
-use crate::core::storage::{Storage, db_path_from_env_or_default};
+use crate::core::storage::{FSRSStats, Storage, db_path_from_env_or_default};
 use crate::core::string_distance::string_distance;
+use anyhow::Context;
 use core::f64;
 use rand::Rng;
 use rand::rngs::ThreadRng;
 use rand::seq::SliceRandom;
+use serde::{Deserialize, Serialize};
 use std::cmp::min;
-use std::fs::OpenOptions;
-use std::io::Write as IoWrite;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::thread::sleep;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
-pub struct SM2Stats {
-    pub interval: i64,
-    pub repetitions: i64,
-    pub easiness_factor: f64,
+/// Represents session performance deltas to be persisted across different study modes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SessionPayload {
+    /// Test mode: (card_id, corrects, incorrects)
+    Test { updates: Vec<(i64, i64, i64)> },
+    /// Cram mode: (card_id, score_delta)
+    Cram { updates: Vec<(i64, i64)> },
+    /// Learn mode (FSRS): (card_id, fsrs_stats, corrects, incorrects, score_delta)
+    Learn {
+        updates: Vec<(i64, FSRSStats, i64, i64, i64)>,
+    },
 }
 
-impl Default for SM2Stats {
-    fn default() -> Self {
-        Self {
-            interval: 0,
-            repetitions: 0,
-            easiness_factor: 2.5,
+impl SessionPayload {
+    pub fn is_empty(&self) -> bool {
+        match self {
+            SessionPayload::Test { updates } => updates.is_empty(),
+            SessionPayload::Cram { updates } => updates.is_empty(),
+            SessionPayload::Learn { updates } => updates.is_empty(),
         }
     }
-}
-
-/// Calculate the next interval and stats for a card based on SM-2 algorithm.
-/// `quality` is a value from 0 to 5.
-pub fn _calculate_sm2(stats: SM2Stats, quality: u8) -> (SM2Stats, i64) {
-    let mut n = stats.repetitions;
-    let mut ef = stats.easiness_factor;
-    let mut i = stats.interval;
-
-    if quality >= 3 {
-        if n == 0 {
-            i = 1;
-        } else if n == 1 {
-            i = 6;
-        } else {
-            i = (i as f64 * ef).round() as i64;
-        }
-        n += 1;
-    } else {
-        n = 0;
-        i = 1;
-    }
-
-    // ef = ef + (0.1 - (5.0 - quality as f64) * (0.08 + (5.0 - quality as f64) * 0.02));
-    ef += 0.1 - (5.0 - quality as f64) * (0.08 + (5.0 - quality as f64) * 0.02);
-    if ef < 1.3 {
-        ef = 1.3;
-    }
-
-    (
-        SM2Stats {
-            interval: i,
-            repetitions: n,
-            easiness_factor: ef,
-        },
-        i,
-    )
 }
 
 pub fn decide(condition1: bool, condition2: bool, rng: &mut ThreadRng, probability: f64) -> bool {
@@ -194,17 +164,17 @@ pub fn get_multiple_choice_for_card(
     chosen
 }
 
-/// Try to commit session updates with retries and backoff.
+/// Try to commit session updates with retries and exponential backoff.
 ///
-/// - `max_attempts`: how many total attempts (including first attempt).
-/// - On transient errors (contains "locked" or "busy") we retry; otherwise we fail fast.
+/// - `max_attempts`: total attempts (including first).
+/// - On transient errors ("locked" or "busy"), retries with backoff.
 /// - Returns Ok(()) if commit succeeds, or Err(anyhow::Error) on permanent failure.
-pub fn commit_session_with_retries(
-    storage: &mut Storage,
-    updates: &[(i64, i64, i64, Option<SM2Stats>)],
+pub fn commit_payload_with_retries(
+    storage: &Storage,
+    payload: &SessionPayload,
     max_attempts: usize,
 ) -> anyhow::Result<()> {
-    if updates.is_empty() {
+    if payload.is_empty() {
         return Ok(());
     }
 
@@ -213,46 +183,43 @@ pub fn commit_session_with_retries(
 
     loop {
         attempt += 1;
-        match storage.commit_session_batch(updates) {
+        let res = match payload {
+            SessionPayload::Test { updates } => storage.commit_test_session(updates),
+            SessionPayload::Cram { updates } => storage.commit_cram_session(updates),
+            SessionPayload::Learn { updates } => storage.commit_learn_session(updates),
+        };
+
+        match res {
             Ok(()) => return Ok(()),
             Err(e) => {
-                // Inspect error string for likely transient causes (e.g. SQLITE_BUSY / "database is locked").
-                // We downcast/inspect generically via the error string because commit_session_batch returns anyhow::Error.
                 let err_str = format!("{}", e);
                 let is_transient = err_str.to_lowercase().contains("locked")
                     || err_str.to_lowercase().contains("busy");
 
                 if attempt >= max_attempts || !is_transient {
-                    // Give up and propagate the original error.
                     return Err(e);
                 }
 
                 eprintln!(
-                    "commit_session_batch attempt {}/{} failed with transient error: {}. Retrying in {}ms...",
+                    "commit_payload_with_retries attempt {}/{} failed with transient error: {}. Retrying in {}ms...",
                     attempt, max_attempts, err_str, backoff_ms
                 );
 
                 sleep(Duration::from_millis(backoff_ms));
-                // exponential backoff, cap at 2000ms
                 backoff_ms = min(backoff_ms.saturating_mul(2), 2000);
             }
         }
     }
 }
 
-/// Write failed session deltas to a timestamped local file next to the DB
-/// failed session file format: each line  = "card_id,corrects,incorrects,sm2_json\n"
-pub fn write_failed_session_file(
-    updates: &[(i64, i64, i64, Option<SM2Stats>)],
-) -> anyhow::Result<PathBuf> {
-    // Use storage's db path helper to find the DB directory (stores next to DB).
+/// Write failed session payload as JSON to a timestamped local file next to the DB.
+pub fn write_failed_session_file(payload: &SessionPayload) -> anyhow::Result<PathBuf> {
     let mut path = db_path_from_env_or_default();
     let parent = path
         .parent()
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."));
 
-    // timestamp for filename
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -261,22 +228,60 @@ pub fn write_failed_session_file(
     let filename = format!("quizzy_failed_session_{}.log", ts);
     path = parent.join(filename);
 
-    let mut f = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(&path)
-        .map_err(|e| anyhow::anyhow!("failed to create fallback session file: {}", e))?;
+    let json_str = serde_json::to_string_pretty(payload)
+        .context("failed to serialize session payload to JSON")?;
 
-    for (card_id, corrects, incorrects, sm2) in updates {
-        let sm2_str = if let Some(s) = sm2 {
-            serde_json::to_string(s).unwrap_or_default()
-        } else {
-            "NONE".to_string()
-        };
-        writeln!(f, "{},{},{},{}", card_id, corrects, incorrects, sm2_str)
-            .map_err(|e| anyhow::anyhow!("failed to write to fallback session file: {}", e))?;
-    }
+    std::fs::write(&path, json_str).with_context(|| {
+        format!(
+            "failed to write fallback session file to {}",
+            path.display()
+        )
+    })?;
 
     Ok(path)
+}
+
+/// Read a failed session file created by `write_failed_session_file`.
+/// Supports new JSON format as well as legacy CSV format (`card_id,corrects,incorrects`).
+pub fn read_failed_session_file(path: &Path) -> anyhow::Result<SessionPayload> {
+    let s = std::fs::read_to_string(path)
+        .with_context(|| format!("Failed to read failed session file {}.", path.display()))?;
+
+    if let Ok(payload) = serde_json::from_str::<SessionPayload>(&s) {
+        return Ok(payload);
+    }
+
+    let mut updates = Vec::new();
+    for (line_number, line) in s.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = line.split(',').collect();
+        if parts.len() >= 3 {
+            let a: i64 = parts[0].trim().parse().with_context(|| {
+                format!(
+                    "Invalid card_id in {} line {}.",
+                    path.display(),
+                    line_number + 1
+                )
+            })?;
+            let b: i64 = parts[1].trim().parse().with_context(|| {
+                format!(
+                    "Invalid corrects in {} line {}.",
+                    path.display(),
+                    line_number + 1
+                )
+            })?;
+            let c: i64 = parts[2].trim().parse().with_context(|| {
+                format!(
+                    "Invalid incorrects in {} line {}.",
+                    path.display(),
+                    line_number + 1
+                )
+            })?;
+            updates.push((a, b, c));
+        }
+    }
+    Ok(SessionPayload::Test { updates })
 }
