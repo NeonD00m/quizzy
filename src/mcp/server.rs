@@ -483,29 +483,28 @@ async fn create_stdio_transport() -> (tokio::io::DuplexStream, tokio::io::Duplex
             }
 
             // Check if this is an Antigravity server/discover probe
-            if line.contains("server/discover") {
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
-                    if v.get("method").and_then(|m| m.as_str()) == Some("server/discover") {
-                        let id = v.get("id").cloned().unwrap_or(serde_json::Value::Null);
-                        tracing::info!(
-                            "Intercepted Antigravity server/discover probe with id {:?}",
-                            id
-                        );
-                        let resp = serde_json::json!({
-                            "jsonrpc": "2.0",
-                            "id": id,
-                            "error": {
-                                "code": -32601,
-                                "message": "Method not found"
-                            }
-                        });
-                        let resp_str = format!("{}\n", resp);
-                        let _ = stdout.write_all(resp_str.as_bytes()).await;
-                        let _ = stdout.flush().await;
-                        line.clear();
-                        continue;
+            if line.contains("server/discover")
+                && let Ok(v) = serde_json::from_str::<serde_json::Value>(&line)
+                && v.get("method").and_then(|m| m.as_str()) == Some("server/discover")
+            {
+                let id = v.get("id").cloned().unwrap_or(serde_json::Value::Null);
+                tracing::info!(
+                    "Intercepted Antigravity server/discover probe with id {:?}",
+                    id
+                );
+                let resp = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": {
+                        "code": -32601,
+                        "message": "Method not found"
                     }
-                }
+                });
+                let resp_str = format!("{}\n", resp);
+                let _ = stdout.write_all(resp_str.as_bytes()).await;
+                let _ = stdout.flush().await;
+                line.clear();
+                continue;
             }
 
             // Forward line to rmcp
