@@ -22,51 +22,40 @@ use tracing_subscriber::EnvFilter;
 /// silently drop the constraint when it's an array. Using `anyOf` is the
 /// portable way to express nullable types in JSON Schema 2020-12.
 fn nullable_to_anyof(schema: &mut schemars::Schema) {
-    if let Some(obj) = schema.as_object_mut() {
-        if let Some(props) = obj.get_mut("properties") {
-            if let Some(props_map) = props.as_object_mut() {
-                for (_key, prop_schema) in props_map.iter_mut() {
-                    if let Some(prop_obj) = prop_schema.as_object_mut() {
-                        if let Some(type_val) = prop_obj.remove("type") {
-                            if let Some(type_arr) = type_val.as_array() {
-                                // Build anyOf branches, carrying over any extra
-                                // constraints (format, minimum, etc.) on the first branch
-                                let mut branches: Vec<serde_json::Value> = Vec::new();
-                                for t in type_arr {
-                                    if t.as_str() == Some("null") {
-                                        branches
-                                            .push(serde_json::json!({"type": "null"}));
-                                    } else {
-                                        // Clone the original property object but with
-                                        // a single-string `type` instead of the array
-                                        let mut branch = prop_obj.clone();
-                                        branch.insert(
-                                            "type".to_string(),
-                                            t.clone(),
-                                        );
-                                        // Remove anyOf from the branch if present
-                                        // (shouldn't be, but just in case)
-                                        branch.remove("anyOf");
-                                        branches.push(
-                                            serde_json::Value::Object(branch),
-                                        );
-                                    }
-                                }
-                                // Remove constraints that are now inside the branches
-                                prop_obj.remove("format");
-                                prop_obj.remove("minimum");
-                                prop_obj.remove("maximum");
-                                prop_obj.insert(
-                                    "anyOf".to_string(),
-                                    serde_json::Value::Array(branches),
-                                );
-                            } else {
-                                // Single string type — put it back unchanged
-                                prop_obj
-                                    .insert("type".to_string(), type_val);
-                            }
+    if let Some(obj) = schema.as_object_mut()
+        && let Some(props) = obj.get_mut("properties")
+        && let Some(props_map) = props.as_object_mut()
+    {
+        for (_key, prop_schema) in props_map.iter_mut() {
+            if let Some(prop_obj) = prop_schema.as_object_mut()
+                && let Some(type_val) = prop_obj.remove("type")
+            {
+                if let Some(type_arr) = type_val.as_array() {
+                    // Build anyOf branches, carrying over any extra
+                    // constraints (format, minimum, etc.) on the first branch
+                    let mut branches: Vec<serde_json::Value> = Vec::new();
+                    for t in type_arr {
+                        if t.as_str() == Some("null") {
+                            branches.push(serde_json::json!({"type": "null"}));
+                        } else {
+                            // Clone the original property object but with
+                            // a single-string `type` instead of the array
+                            let mut branch = prop_obj.clone();
+                            branch.insert("type".to_string(), t.clone());
+                            // Remove anyOf from the branch if present
+                            // (shouldn't be, but just in case)
+                            branch.remove("anyOf");
+                            branches.push(serde_json::Value::Object(branch));
                         }
                     }
+                    // Remove constraints that are now inside the branches
+                    prop_obj.remove("format");
+                    prop_obj.remove("minimum");
+                    prop_obj.remove("maximum");
+                    prop_obj.insert("anyOf".to_string(), serde_json::Value::Array(branches));
+                } else {
+                    // Single string type — put it back unchanged
+                    prop_obj.insert("type".to_string(), type_val);
                 }
             }
         }
