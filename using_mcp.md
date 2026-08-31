@@ -10,7 +10,9 @@ Ensure `quizzy` is built and accessible in your system PATH.
 This same code snippet probably works in all of them, they just have different files or file paths:
 
 In Antigravity, MCP servers are registered via `.antigravity/mcp.json` at the root of your workspace or globally in `~/.config/antigravity/mcp.json`.
-For Claude, add to `claude_desktop_config.json` (where on file system?).
+For Claude, add to `~/.claude.json` (the file the cli uses) or:
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json (typically C:\Users\YourName\AppData\Roaming\Claude\claude_desktop_config.json)`
 In Cursor, write this in `.cursor/mcp.json` or project `.mcp.json`:
 ```json
 {
@@ -48,10 +50,12 @@ antigravity mcp list
 
 * `list_decks`: Search and list local decks and card counts.
 * `create_deck`: Create a new empty deck.
-* `add_card`: Append single or batch cards (just terms and definitions).
-* `edit_card`: Update existing card content by ID.
-* `remove_card`: Remove specific cards from a deck.
-* `get_stats`: View deck retention, card mastery scores, and review metrics.
+* `get_deck_cards`: List cards in a deck by `deck_id` (paginated).
+* `add_cards`: Append cards to a deck in bulk.
+* `edit_card`: Update existing card content by `card_id`.
+* `remove_cards`: Remove cards by `card_ids` (bulk).
+* `rename_deck`: Rename a deck by `deck_id`.
+* `get_deck_stats`: View deck retention, card mastery scores, and review metrics.
 
 The AI Agent is NOT given the ability to delete a deck (at all) or clear all of a deck's cards (in one command).
 
@@ -63,17 +67,11 @@ Try prompting your AI assistant with:
 2. *"List my decks to verify 'Docker Basics' exists."*
 3. *"Edit card 1 in 'Docker Basics' to fix typos."*
 
-```
-
-```
-
 ## Environment Overrides & Stdio Hygiene
 
 | Variable | Description | Default |
 | --- | --- | --- |
-| `QUIZZY_DB` | Overrides the default platform path to target a specific SQLite database file.
-
- | Platform default directory via `dirs-next`<br> |
+| `QUIZZY_DB` | Overrides the default platform path to target a specific SQLite database file. | Platform default directory via `dirs-next`<br> |
 | `RUST_LOG` | Controls internal log verbosity (keep set to `error` to avoid stream pollution). | `error` |
 
 > **Warning on Stdio Transport:** When building custom agent scripts or running CLI harnesses, ensure debug output from the parent process is not piped into `stdout`. Non-JSON messages written to standard output will break the MCP frame parser.

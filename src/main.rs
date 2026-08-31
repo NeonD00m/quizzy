@@ -264,22 +264,19 @@ fn startup(storage: &mut Storage) -> anyhow::Result<()> {
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    // Initialize tracing subscriber strictly on stderr before any storage/db calls
-    if matches!(cli.command, Command::MCP {}) {
-        let _ = tracing_subscriber::fmt()
-            .with_env_filter(
-                tracing_subscriber::EnvFilter::from_default_env()
-                    .add_directive(tracing::Level::DEBUG.into()),
-            )
-            .with_writer(std::io::stderr)
-            .with_ansi(false)
-            .try_init();
-    } else if std::env::var_os("RUST_LOG").is_some() {
-        let _ = tracing_subscriber::fmt()
-            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-            .with_writer(std::io::stderr)
-            .try_init();
-    }
+    // Initialize tracing subscriber strictly on stderr to avoid polluting stdout
+    let default_filter = if matches!(cli.command, Command::MCP {}) {
+        "error"
+    } else {
+        "warn"
+    };
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(default_filter));
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(env_filter)
+        .with_writer(std::io::stderr)
+        .with_ansi(false)
+        .try_init();
 
     let mut storage = Storage::open_default()?;
     if !matches!(cli.command, Command::MCP {}) {

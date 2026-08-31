@@ -15,6 +15,64 @@ use serde::Deserialize;
 use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
 
+/// Schema transform: converts `"type": ["T", "null"]` arrays into
+/// `"anyOf": [{"type": "T"}, {"type": "null"}]` branches on each property.
+///
+/// Many MCP clients only accept `type` as a single string and will reject or
+/// silently drop the constraint when it's an array. Using `anyOf` is the
+/// portable way to express nullable types in JSON Schema 2020-12.
+fn nullable_to_anyof(schema: &mut schemars::Schema) {
+    if let Some(obj) = schema.as_object_mut() {
+        if let Some(props) = obj.get_mut("properties") {
+            if let Some(props_map) = props.as_object_mut() {
+                for (_key, prop_schema) in props_map.iter_mut() {
+                    if let Some(prop_obj) = prop_schema.as_object_mut() {
+                        if let Some(type_val) = prop_obj.remove("type") {
+                            if let Some(type_arr) = type_val.as_array() {
+                                // Build anyOf branches, carrying over any extra
+                                // constraints (format, minimum, etc.) on the first branch
+                                let mut branches: Vec<serde_json::Value> = Vec::new();
+                                for t in type_arr {
+                                    if t.as_str() == Some("null") {
+                                        branches
+                                            .push(serde_json::json!({"type": "null"}));
+                                    } else {
+                                        // Clone the original property object but with
+                                        // a single-string `type` instead of the array
+                                        let mut branch = prop_obj.clone();
+                                        branch.insert(
+                                            "type".to_string(),
+                                            t.clone(),
+                                        );
+                                        // Remove anyOf from the branch if present
+                                        // (shouldn't be, but just in case)
+                                        branch.remove("anyOf");
+                                        branches.push(
+                                            serde_json::Value::Object(branch),
+                                        );
+                                    }
+                                }
+                                // Remove constraints that are now inside the branches
+                                prop_obj.remove("format");
+                                prop_obj.remove("minimum");
+                                prop_obj.remove("maximum");
+                                prop_obj.insert(
+                                    "anyOf".to_string(),
+                                    serde_json::Value::Array(branches),
+                                );
+                            } else {
+                                // Single string type — put it back unchanged
+                                prop_obj
+                                    .insert("type".to_string(), type_val);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[derive(Deserialize, JsonSchema)]
 pub struct NewCard {
     pub term: String,
@@ -22,11 +80,13 @@ pub struct NewCard {
 }
 
 #[derive(Deserialize, JsonSchema)]
+#[schemars(transform = nullable_to_anyof)]
 pub struct ListDecksRequest {
     pub search: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
+#[schemars(transform = nullable_to_anyof)]
 pub struct GetDeckCardsRequest {
     pub deck_id: i64,
     pub limit: Option<u32>,
@@ -55,6 +115,7 @@ pub struct RemoveCardsRequest {
 }
 
 #[derive(Deserialize, JsonSchema)]
+#[schemars(transform = nullable_to_anyof)]
 pub struct EditCardRequest {
     pub card_id: i64,
     pub term: Option<String>,
@@ -464,18 +525,35 @@ impl ServerHandler for McpServer {
 }
 
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::sync::mpsc;
 
 async fn create_stdio_transport() -> (tokio::io::DuplexStream, tokio::io::DuplexStream) {
     let (server_in_write, server_in_read) = tokio::io::duplex(65536);
     let (server_out_read, server_out_write) = tokio::io::duplex(65536);
+    let (stdout_tx, mut stdout_rx) = mpsc::channel::<Vec<u8>>(128);
 
-    // Stdin reader & filter -> forwards to rmcp
+    // Dedicated stdout writer task to guarantee synchronized, non-interleaving writes
+    tokio::spawn(async move {
+        let mut stdout = tokio::io::stdout();
+        while let Some(chunk) = stdout_rx.recv().await {
+            if let Err(e) = stdout.write_all(&chunk).await {
+                tracing::debug!("Error writing to stdout: {:?}", e);
+                break;
+            }
+            if let Err(e) = stdout.flush().await {
+                tracing::debug!("Error flushing stdout: {:?}", e);
+                break;
+            }
+        }
+    });
+
+    // Stdin reader & filter -> forwards to rmcp or responds to probes via stdout_tx
+    let stdin_stdout_tx = stdout_tx.clone();
     tokio::spawn(async move {
         let stdin = tokio::io::stdin();
         let mut reader = BufReader::new(stdin);
         let mut line = String::new();
         let mut server_in = server_in_write;
-        let mut stdout = tokio::io::stdout();
 
         while let Ok(n) = reader.read_line(&mut line).await {
             if n == 0 {
@@ -501,8 +579,9 @@ async fn create_stdio_transport() -> (tokio::io::DuplexStream, tokio::io::Duplex
                     }
                 });
                 let resp_str = format!("{}\n", resp);
-                let _ = stdout.write_all(resp_str.as_bytes()).await;
-                let _ = stdout.flush().await;
+                if stdin_stdout_tx.send(resp_str.into_bytes()).await.is_err() {
+                    break;
+                }
                 line.clear();
                 continue;
             }
@@ -517,21 +596,18 @@ async fn create_stdio_transport() -> (tokio::io::DuplexStream, tokio::io::Duplex
         }
     });
 
-    // rmcp server output -> Stdout
+    // rmcp server output -> stdout_tx
     tokio::spawn(async move {
         let mut reader = BufReader::new(server_out_read);
-        let mut stdout = tokio::io::stdout();
         let mut buffer = [0u8; 8192];
 
         loop {
             match reader.read(&mut buffer).await {
                 Ok(0) => break,
                 Ok(n) => {
-                    if let Err(e) = stdout.write_all(&buffer[..n]).await {
-                        tracing::debug!("Error writing to stdout: {:?}", e);
+                    if stdout_tx.send(buffer[..n].to_vec()).await.is_err() {
                         break;
                     }
-                    let _ = stdout.flush().await;
                 }
                 Err(e) => {
                     tracing::debug!("Error reading from rmcp server output: {:?}", e);
