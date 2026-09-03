@@ -12,7 +12,7 @@ A terminal-first, Quizlet-like flashcard tool written in Rust. Import decks (Qui
 - Lightweight CLI written in Rust - good for learning and reducing *noise* when you have to be locked in.
 
 #### Features
-- Import from Quizlet JSON (helper included) or load TSV/CSV/JSON text files.
+- Import from Quizlet JSON (see [`importing.md`](./importing.md)) or load TSV/CSV/JSON text files.
 - Save decks and per-card stats locally using SQLite (`rusqlite`).
 - Study modes:
   - `learn`: multiple-choice or written quizzes with progress tracking and optional stats commit.
@@ -21,6 +21,7 @@ A terminal-first, Quizlet-like flashcard tool written in Rust. Import decks (Qui
 - Command-driven CLI powered by `clap`.
 - Platform-aware storage path via `dirs-next`.
 - Detects and offers to recover failed session files on startup.
+- **MCP** server (locally hosted) via `quizzy mcp` (see [`using_mcp.md`](./using_mcp.md)).
 
 #### Quick install
 - Download prebuilt binaries from the Releases page:
@@ -62,10 +63,6 @@ quizzy gamble mydeck           # play in the "study casino"
 quizzy new tutorial examples/tutorial.csv
 quizzy learn tutorial
 ```
-
-#### Importing from Quizlet
-- Quizzy currently supports the Quizlet web JSON format (see `src/core/import.rs` and the companion `importing.md`).
-- If Quizlet’s API changes, the helper will prompt you to save the browser JSON response and import from that file.
 
 ###### Configuration and storage
 - Data is stored in an SQLite DB located using `dirs-next` patient conventions (platform-specific).

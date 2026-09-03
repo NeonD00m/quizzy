@@ -9,12 +9,58 @@ use rmcp::{
         ServerCapabilities, ServerInfo,
     },
     tool, tool_handler, tool_router,
-    transport::stdio,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
+
+/// Schema transform: converts `"type": ["T", "null"]` arrays into
+/// `"anyOf": [{"type": "T"}, {"type": "null"}]` branches on each property.
+///
+/// Many MCP clients only accept `type` as a single string and will reject or
+/// silently drop the constraint when it's an array. Using `anyOf` is the
+/// portable way to express nullable types in JSON Schema 2020-12.
+fn nullable_to_anyof(schema: &mut schemars::Schema) {
+    if let Some(obj) = schema.as_object_mut()
+        && let Some(props) = obj.get_mut("properties")
+        && let Some(props_map) = props.as_object_mut()
+    {
+        for (_key, prop_schema) in props_map.iter_mut() {
+            if let Some(prop_obj) = prop_schema.as_object_mut()
+                && let Some(type_val) = prop_obj.remove("type")
+            {
+                if let Some(type_arr) = type_val.as_array() {
+                    // Build anyOf branches, carrying over any extra
+                    // constraints (format, minimum, etc.) on the first branch
+                    let mut branches: Vec<serde_json::Value> = Vec::new();
+                    for t in type_arr {
+                        if t.as_str() == Some("null") {
+                            branches.push(serde_json::json!({"type": "null"}));
+                        } else {
+                            // Clone the original property object but with
+                            // a single-string `type` instead of the array
+                            let mut branch = prop_obj.clone();
+                            branch.insert("type".to_string(), t.clone());
+                            // Remove anyOf from the branch if present
+                            // (shouldn't be, but just in case)
+                            branch.remove("anyOf");
+                            branches.push(serde_json::Value::Object(branch));
+                        }
+                    }
+                    // Remove constraints that are now inside the branches
+                    prop_obj.remove("format");
+                    prop_obj.remove("minimum");
+                    prop_obj.remove("maximum");
+                    prop_obj.insert("anyOf".to_string(), serde_json::Value::Array(branches));
+                } else {
+                    // Single string type — put it back unchanged
+                    prop_obj.insert("type".to_string(), type_val);
+                }
+            }
+        }
+    }
+}
 
 #[derive(Deserialize, JsonSchema)]
 pub struct NewCard {
@@ -23,11 +69,13 @@ pub struct NewCard {
 }
 
 #[derive(Deserialize, JsonSchema)]
+#[schemars(transform = nullable_to_anyof)]
 pub struct ListDecksRequest {
     pub search: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
+#[schemars(transform = nullable_to_anyof)]
 pub struct GetDeckCardsRequest {
     pub deck_id: i64,
     pub limit: Option<u32>,
@@ -56,6 +104,7 @@ pub struct RemoveCardsRequest {
 }
 
 #[derive(Deserialize, JsonSchema)]
+#[schemars(transform = nullable_to_anyof)]
 pub struct EditCardRequest {
     pub card_id: i64,
     pub term: Option<String>,
@@ -464,20 +513,118 @@ impl ServerHandler for McpServer {
     }
 }
 
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::sync::mpsc;
+
+async fn create_stdio_transport() -> (tokio::io::DuplexStream, tokio::io::DuplexStream) {
+    let (server_in_write, server_in_read) = tokio::io::duplex(65536);
+    let (server_out_read, server_out_write) = tokio::io::duplex(65536);
+    let (stdout_tx, mut stdout_rx) = mpsc::channel::<Vec<u8>>(128);
+
+    // Dedicated stdout writer task to guarantee synchronized, non-interleaving writes
+    tokio::spawn(async move {
+        let mut stdout = tokio::io::stdout();
+        while let Some(chunk) = stdout_rx.recv().await {
+            if let Err(e) = stdout.write_all(&chunk).await {
+                tracing::debug!("Error writing to stdout: {:?}", e);
+                break;
+            }
+            if let Err(e) = stdout.flush().await {
+                tracing::debug!("Error flushing stdout: {:?}", e);
+                break;
+            }
+        }
+    });
+
+    // Stdin reader & filter -> forwards to rmcp or responds to probes via stdout_tx
+    let stdin_stdout_tx = stdout_tx.clone();
+    tokio::spawn(async move {
+        let stdin = tokio::io::stdin();
+        let mut reader = BufReader::new(stdin);
+        let mut line = String::new();
+        let mut server_in = server_in_write;
+
+        while let Ok(n) = reader.read_line(&mut line).await {
+            if n == 0 {
+                break;
+            }
+
+            // Check if this is an Antigravity server/discover probe
+            if line.contains("server/discover")
+                && let Ok(v) = serde_json::from_str::<serde_json::Value>(&line)
+                && v.get("method").and_then(|m| m.as_str()) == Some("server/discover")
+            {
+                let id = v.get("id").cloned().unwrap_or(serde_json::Value::Null);
+                tracing::info!(
+                    "Intercepted Antigravity server/discover probe with id {:?}",
+                    id
+                );
+                let resp = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": {
+                        "code": -32601,
+                        "message": "Method not found"
+                    }
+                });
+                let resp_str = format!("{}\n", resp);
+                if stdin_stdout_tx.send(resp_str.into_bytes()).await.is_err() {
+                    break;
+                }
+                line.clear();
+                continue;
+            }
+
+            // Forward line to rmcp
+            if let Err(e) = server_in.write_all(line.as_bytes()).await {
+                tracing::debug!("Error forwarding stdin to rmcp: {:?}", e);
+                break;
+            }
+            let _ = server_in.flush().await;
+            line.clear();
+        }
+    });
+
+    // rmcp server output -> stdout_tx
+    tokio::spawn(async move {
+        let mut reader = BufReader::new(server_out_read);
+        let mut buffer = [0u8; 8192];
+
+        loop {
+            match reader.read(&mut buffer).await {
+                Ok(0) => break,
+                Ok(n) => {
+                    if stdout_tx.send(buffer[..n].to_vec()).await.is_err() {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    tracing::debug!("Error reading from rmcp server output: {:?}", e);
+                    break;
+                }
+            }
+        }
+    });
+
+    (server_in_read, server_out_write)
+}
+
 /// launch the mcp server with tokio and rmcp
 #[tokio::main]
 pub async fn launch(storage: Storage) -> anyhow::Result<()> {
-    // initialize stdout logging
-    tracing_subscriber::fmt()
+    // initialize stdout logging (to stderr)
+    let _ = tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env().add_directive(tracing::Level::DEBUG.into()))
         .with_writer(std::io::stderr)
         .with_ansi(false)
-        .init();
+        .try_init();
     tracing::info!("Starting Quizzy MCP Server");
 
-    // create instance of MCP server on stdio
+    let transport = create_stdio_transport().await;
+
+    // create instance of MCP server on stdio with probe filtering
     let service = McpServer::new(storage)
-        .serve(stdio())
+        .serve(transport)
         .await
         .inspect_err(|e| {
             tracing::error!("serving error: {:?}", e);
